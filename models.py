@@ -18,8 +18,6 @@ class Sensor(Base):
     sensor_id = Column(Integer, primary_key=True, autoincrement=True)
     greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
     type = Column(String(50), nullable=False)
-    min_value = Column(DECIMAL(10, 2))
-    max_value = Column(DECIMAL(10, 2))
 
 
 class SensorReading(Base):

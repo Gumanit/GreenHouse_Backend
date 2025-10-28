@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, APIRouter
 from sqlalchemy.orm import Session
 import models, schemas
+from crud.sensors import get_sensor_info, get_greenhouse_info
 from database import SessionLocal,  get_db
 import random
 from decimal import Decimal
@@ -46,9 +47,9 @@ def generate_sensor_data(season, time_of_day):
         return Decimal(str(round(random.uniform(humidity_range[0], humidity_range[1]), 2)))
 
     return {
-        'temp_sensor': generate_temperature(season, time_of_day),
-        'humidity_sensor': generate_humidity(season, time_of_day),
-        'co2_sensor': generate_co2()
+        'temperature': generate_temperature(season, time_of_day),
+        'humidity': generate_humidity(season, time_of_day),
+        'co2': generate_co2()
     }
 
 
@@ -63,25 +64,21 @@ def create_single_reading(db: Session, vg: int, vs: int):
             raise Exception("В базе нет датчиков. Сначала создайте датчики через API /sensors/")
 
         # Фильтруем датчики по типам
-        temp_sensors = [s for s in sensors if s.type == 'temp_sensor']
-        humidity_sensors = [s for s in sensors if s.type == 'humidity_sensor']
-        co2_sensors = [s for s in sensors if s.type == 'co2_sensor']
-
-        # Берем первый датчик каждого типа
-        temp_sensor = temp_sensors[0] if temp_sensors else None
-        humidity_sensor = humidity_sensors[0] if humidity_sensors else None
-        co2_sensor = co2_sensors[0] if co2_sensors else None
+        temp_sensors = [s for s in sensors if s.type == 'temperature']
+        humidity_sensors = [s for s in sensors if s.type == 'humidity']
+        co2_sensors = [s for s in sensors if s.type == 'co2']
 
         sensor_data = generate_sensor_data(vg, vs)
-
-        # Создаем записи для каждого найденного датчика
         readings_data = []
-        if temp_sensor:
-            readings_data.append({"sensor_id": temp_sensor.sensor_id, "value": sensor_data['temp_sensor']})
-        if humidity_sensor:
-            readings_data.append({"sensor_id": humidity_sensor.sensor_id, "value": sensor_data['humidity_sensor']})
-        if co2_sensor:
-            readings_data.append({"sensor_id": co2_sensor.sensor_id, "value": sensor_data['co2_sensor']})
+        for temp_sensor in temp_sensors:
+            if temp_sensor:
+                readings_data.append({"sensor_id": temp_sensor.sensor_id, "value": sensor_data['temperature']})
+        for humidity_sensor in humidity_sensors:
+            if humidity_sensor:
+                readings_data.append({"sensor_id": humidity_sensor.sensor_id, "value": sensor_data['humidity']})
+        for co2_sensor in co2_sensors:
+            if co2_sensor:
+                readings_data.append({"sensor_id": co2_sensor.sensor_id, "value": sensor_data['co2']})
 
         if not readings_data:
             raise Exception("Не найдены датчики подходящих типов (temperature, humidity, co2)")
@@ -141,11 +138,27 @@ def simulate_reading(
         db: Session = Depends(get_db)
 ):
     """Симуляция одного измерения и сохранение в БД"""
-    try:
-        created_readings = create_single_reading(db, vg, vs)
-        return {"message": "Simulated readings created", "readings": created_readings}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    created_readings = create_single_reading(db, vg, vs)
+    readings_data = []
+    for reading in created_readings:
+        reading_dict = {
+            "reading_id": reading.reading_id,
+            "sensor_id": reading.sensor_id,
+            "value": reading.value,
+            "reading_time": reading.reading_time.isoformat() if reading.reading_time else None
+        }
+        additional_sensor_info_dict = get_sensor_info(db, reading.sensor_id)
+        greenhouse_id = additional_sensor_info_dict['greenhouse_id']
+        greenhouse_info_dict = get_greenhouse_info(db, greenhouse_id)
+
+        reading_dict["sensor_type"] = additional_sensor_info_dict["sensor_type"]
+        reading_dict["greenhouse_id"] = additional_sensor_info_dict["greenhouse_id"]
+        reading_dict["greenhouse_name"] = greenhouse_info_dict["greenhouse_name"]
+        reading_dict["greenhouse_location"] = greenhouse_info_dict["location"]
+        reading_dict["greenhouse_description"] = greenhouse_info_dict["description"]
+        readings_data.append(reading_dict)
+
+    return readings_data
 
 
 @router.post("/start-auto-simulation/")

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import models
 import schemas
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -82,3 +82,25 @@ def delete_sensor_db(db: Session, sensor_id: int):
         db.delete(db_sensor)
         db.commit()
     return db_sensor
+
+def get_sensor_info(db: Session, sensor_id: int) -> Optional[dict]:
+    sensor = db.query(models.Sensor).filter(models.Sensor.sensor_id == sensor_id).first()
+
+    if sensor:
+        return {
+            'sensor_id': sensor.sensor_id,
+            'greenhouse_id': sensor.greenhouse_id,
+            'sensor_type': sensor.type,
+        }
+    return None
+
+def get_greenhouse_info(db: Session, greenhouse_id: int) -> Optional[dict]:
+    greenhouse = db.query(models.Greenhouse).filter(models.Greenhouse.greenhouse_id == greenhouse_id).first()
+    if greenhouse:
+        return {
+            'greenhouse_name': greenhouse.name,
+            'greenhouse_id': greenhouse.greenhouse_id,
+            'location': greenhouse.location,
+            'description': greenhouse.description
+        }
+    return None

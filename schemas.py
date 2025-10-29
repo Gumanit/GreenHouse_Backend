@@ -25,8 +25,6 @@ class GreenhouseUpdate(BaseModel):
 class SensorBase(BaseModel):
     greenhouse_id: int
     type: str
-    min_value: Optional[Decimal] = None
-    max_value: Optional[Decimal] = None
 
 class SensorCreate(SensorBase):
     pass
@@ -36,8 +34,7 @@ class Sensor(SensorBase):
     model_config = ConfigDict(from_attributes=True)
 
 class SensorUpdate(BaseModel):
-    min_value: Optional[Decimal] = None
-    max_value: Optional[Decimal] = None
+    pass
 
 # Схемы для SensorReading
 class SensorReadingBase(BaseModel):

@@ -151,7 +151,7 @@ def simulate_reading(
         greenhouse_id = additional_sensor_info_dict['greenhouse_id']
         greenhouse_info_dict = get_greenhouse_info(db, greenhouse_id)
 
-        reading_dict["sensor_type"] = additional_sensor_info_dict["sensor_type"]
+        reading_dict["type"] = additional_sensor_info_dict["type"]
         reading_dict["greenhouse_id"] = additional_sensor_info_dict["greenhouse_id"]
         reading_dict["greenhouse_name"] = greenhouse_info_dict["greenhouse_name"]
         reading_dict["greenhouse_location"] = greenhouse_info_dict["location"]

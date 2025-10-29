@@ -26,7 +26,7 @@ def read_sensor(sensor_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Sensor not found")
     return db_sensor
 
-@router.put("/{sensor_id}", response_model=schemas.Sensor)
+@router.put("/{sensor_id}", response_model=schemas.SensorUpdate)
 def update_sensor(
     sensor_id: int,
     sensor_update: schemas.SensorUpdate,
@@ -90,7 +90,7 @@ def get_sensor_info(db: Session, sensor_id: int) -> Optional[dict]:
         return {
             'sensor_id': sensor.sensor_id,
             'greenhouse_id': sensor.greenhouse_id,
-            'sensor_type': sensor.type,
+            'type': sensor.type,
         }
     return None
 

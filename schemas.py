@@ -23,8 +23,8 @@ class GreenhouseUpdate(BaseModel):
 
 # Схемы для Sensor
 class SensorBase(BaseModel):
-    greenhouse_id: int
     type: str
+    greenhouse_id: int
 
 class SensorCreate(SensorBase):
     pass
@@ -34,7 +34,7 @@ class Sensor(SensorBase):
     model_config = ConfigDict(from_attributes=True)
 
 class SensorUpdate(BaseModel):
-    sensor_type: str
+    type: str
     greenhouse_id: int
 
 # Схемы для SensorReading

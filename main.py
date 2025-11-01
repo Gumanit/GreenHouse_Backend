@@ -15,7 +15,7 @@ import time
 # Импортируем роутеры
 from crud.greenhouses import router as greenhouses_router
 from crud.sensors import router as sensors_router
-from crud.sensorreadings import router as readings_router
+from crud.reports import router as report_router
 from simulations import  router as simulations_router, simulation_running
 
 
@@ -56,7 +56,7 @@ app = FastAPI(
 app.include_router(simulations_router)
 app.include_router(greenhouses_router)
 app.include_router(sensors_router)
-app.include_router(readings_router)
+app.include_router(report_router)
 
 
 if __name__ == "__main__":

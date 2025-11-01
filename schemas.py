@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, condecimal
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -37,18 +37,41 @@ class SensorUpdate(BaseModel):
     type: str
     greenhouse_id: int
 
-# Схемы для SensorReading
-class SensorReadingBase(BaseModel):
-    sensor_id: int
-    value: Decimal
-    reading_time: Optional[datetime] = None
+# Схемы для Report
+class ReportBase(BaseModel):
+    greenhouse_id: int
+    co2_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    humidity_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    temperature_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    co2_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    humidity_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    temperature_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_co2: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_humidity: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_temperature: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    report_time: datetime
 
-class SensorReadingCreate(SensorReadingBase):
+
+
+class ReportCreate(ReportBase):
+    """Схема для создания нового отчета"""
     pass
 
-class SensorReading(SensorReadingBase):
-    reading_id: int
-    model_config = ConfigDict(from_attributes=True)
 
-class SensorReadingUpdate(BaseModel):
-    value: Optional[Decimal] = None
+class ReportUpdate(BaseModel):
+    """Схема для частичного обновления"""
+    co2_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    humidity_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    temperature_value: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    co2_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    humidity_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    temperature_pred: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_co2: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_humidity: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+    command_temperature: Optional[condecimal(max_digits=10, decimal_places=2)] = None
+
+
+class ReportRead(ReportBase):
+    """Схема для отображения данных"""
+    id: int
+    report_time: datetime

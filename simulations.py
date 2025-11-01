@@ -83,71 +83,21 @@ def create_single_reading(db: Session, vg: int, vs: int):
         if not readings_data:
             raise Exception("Не найдены датчики подходящих типов (temperature, humidity, co2)")
 
-        created_readings = []
-        for reading_data in readings_data:
-            reading = schemas.SensorReadingCreate(**reading_data)
-            # Используем функцию из crud
-            from crud.sensorreadings import create_sensor_reading_db
-            created_reading = create_sensor_reading_db(db=db, reading=reading)
-            created_readings.append(created_reading)
-
-        return created_readings
+        return collect_readings_data(readings_data, db)
 
     except Exception as e:
         raise Exception(f"Ошибка при создании показаний: {str(e)}")
 
 
-def run_continuous_simulation(vg: int, vs: int):
-    """Запуск непрерывной симуляции в фоновом потоке"""
-    global simulation_running
-
-    simulation_running = True
-    iteration = 0
-
-    while simulation_running:
-        try:
-            # Создаем новую сессию для каждого цикла
-            db = SessionLocal()
-            try:
-                created_readings = create_single_reading(db, vg, vs)
-                iteration += 1
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                      f"Авто-запись #{iteration}: создано {len(created_readings)} записей")
-            except Exception as e:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                      f"Ошибка при создании записи: {e}")
-            finally:
-                db.close()
-
-            # Ждем 5 минут (300 секунд)
-            for _ in range(300):
-                if not simulation_running:
-                    break
-                time.sleep(1)
-
-        except Exception as e:
-            print(f"Критическая ошибка в симуляции: {e}")
-            break
-
-
-# Endpoints симуляции
-@router.post("/simulate-reading/")
-def simulate_reading(
-        vg: int = Query(0, description="Время года: 0-лето, 1-осень, 2-зима, 3-весна"),
-        vs: int = Query(0, description="Время суток: 0-день, 1-ночь"),
-        db: Session = Depends(get_db)
-):
-    """Симуляция одного измерения и сохранение в БД"""
-    created_readings = create_single_reading(db, vg, vs)
+def collect_readings_data(created_readings, db: Session = Depends(get_db)):
     readings_data = []
     for reading in created_readings:
         reading_dict = {
-            "reading_id": reading.reading_id,
-            "sensor_id": reading.sensor_id,
-            "value": reading.value,
-            "reading_time": reading.reading_time.isoformat() if reading.reading_time else None
+            "sensor_id": reading["sensor_id"],
+            "value": reading["value"],
+            "reading_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        additional_sensor_info_dict = get_sensor_info(db, reading.sensor_id)
+        additional_sensor_info_dict = get_sensor_info(db, reading["sensor_id"])
         greenhouse_id = additional_sensor_info_dict['greenhouse_id']
         greenhouse_info_dict = get_greenhouse_info(db, greenhouse_id)
 
@@ -157,66 +107,14 @@ def simulate_reading(
         reading_dict["greenhouse_location"] = greenhouse_info_dict["location"]
         reading_dict["greenhouse_description"] = greenhouse_info_dict["description"]
         readings_data.append(reading_dict)
-
     return readings_data
 
-
-@router.post("/start-auto-simulation/")
-def start_auto_simulation(
+# Endpoint симуляции
+@router.get("/simulate-reading/")
+def simulate_reading(
         vg: int = Query(0, description="Время года: 0-лето, 1-осень, 2-зима, 3-весна"),
-        vs: int = Query(0, description="Время суток: 0-день, 1-ночь")
+        vs: int = Query(0, description="Время суток: 0-день, 1-ночь"),
+        db: Session = Depends(get_db)
 ):
-    """Запуск автоматической симуляции каждые 5 минут"""
-    global simulation_task, simulation_running
-
-    if simulation_running:
-        raise HTTPException(
-            status_code=400,
-            detail="Автоматическая симуляция уже запущена"
-        )
-
-    # Запускаем в отдельном потоке
-    simulation_task = threading.Thread(
-        target=run_continuous_simulation,
-        args=(vg, vs),
-        daemon=True
-    )
-    simulation_task.start()
-
-    return {
-        "message": "Автоматическая симуляция запущена",
-        "interval_minutes": 5,
-        "season": vg,
-        "time_of_day": vs,
-        "status": "running"
-    }
-
-
-@router.post("/stop-auto-simulation/")
-def stop_auto_simulation():
-    """Остановка автоматической симуляции"""
-    global simulation_running
-
-    if not simulation_running:
-        raise HTTPException(
-            status_code=400,
-            detail="Автоматическая симуляция не запущена"
-        )
-
-    simulation_running = False
-
-    return {
-        "message": "Автоматическая симуляция остановлена",
-        "status": "stopped"
-    }
-
-
-@router.get("/simulation-status/")
-def get_simulation_status():
-    """Получение статуса автоматической симуляции"""
-    global simulation_running
-
-    return {
-        "simulation_running": simulation_running,
-        "status": "running" if simulation_running else "stopped"
-    }
+    """Симуляция одного измерения"""
+    return create_single_reading(db, vg, vs)

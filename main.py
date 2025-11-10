@@ -18,6 +18,8 @@ from crud.sensors import router as sensors_router
 from crud.reports import router as report_router
 from simulations import  router as simulations_router
 from crud.agronomic_rules import router as agronomic_rules_router
+from crud.execution_devices import router as execution_devices_router
+from crud.cameras import router as cameras_router
 
 
 
@@ -59,6 +61,8 @@ app.include_router(greenhouses_router)
 app.include_router(sensors_router)
 app.include_router(report_router)
 app.include_router(agronomic_rules_router)
+app.include_router(execution_devices_router)
+app.include_router(cameras_router)
 
 
 if __name__ == "__main__":

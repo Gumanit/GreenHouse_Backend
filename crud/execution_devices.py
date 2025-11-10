@@ -12,29 +12,29 @@ router = APIRouter(
 )
 
 @router.post("/create")
-def create_device(content: schemas.ExecutionDeviceCreate, db: Session = Depends(get_db())):
+def create_device(content: schemas.ExecutionDeviceCreate, db: Session = Depends(get_db)):
     return create_device_db(content, db)
 
 @router.get("/read/{id}")
-def read_device(id: int, db: Session = Depends(get_db())):
+def read_device(id: int, db: Session = Depends(get_db)):
     device = read_device_db(id, db)
     if device is None:
         raise HTTPException(status_code=404, detail="Device doesn't exist")
     return device
 
 @router.get("/read")
-def read_devices(skip: int, limit: int, db: Session = Depends(get_db())):
+def read_devices(skip: int, limit: int, db: Session = Depends(get_db)):
     return read_devices_db(db, skip, limit)
 
 @router.put("/update/{id}")
-def update_device(content: schemas.ExecutionDeviceUpdate, id: int, db: Session = Depends(get_db())):
+def update_device(content: schemas.ExecutionDeviceUpdate, id: int, db: Session = Depends(get_db)):
     updated_device = update_device_db(content, id, db)
     if updated_device is None:
         raise HTTPException(status_code=404, detail="Device doesn't exist")
     return updated_device
 
 @router.delete("/delete/{id}")
-def delete_device(id: int, db: Session = Depends(get_db())):
+def delete_device(id: int, db: Session = Depends(get_db)):
     deleted_device = delete_device_db(id, db)
     if deleted_device is None:
         raise HTTPException(status_code=404, detail="Device doesn't exist")
@@ -42,7 +42,7 @@ def delete_device(id: int, db: Session = Depends(get_db())):
 
 
 def create_device_db(content: schemas.ExecutionDeviceCreate, db: Session):
-    db_execdev = schemas.ExecutionDevice(**content.model_dump())
+    db_execdev = schemas.ExecutionDevice(**content.model_dump)
     db.add(db_execdev)
     db.commit()
     db.refresh(db_execdev)

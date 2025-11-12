@@ -23,7 +23,7 @@ def read_device(id: int, db: Session = Depends(get_db)):
     return device
 
 @router.get("/read")
-def read_devices(skip: int, limit: int, db: Session = Depends(get_db)):
+def read_devices(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return read_devices_db(db, skip, limit)
 
 @router.put("/update/{id}")

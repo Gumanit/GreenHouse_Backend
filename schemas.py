@@ -142,7 +142,7 @@ class CameraCreate(CameraBase):
     pass
 
 class CameraUpdate(BaseModel):
-    greehouse_id: Optional[int] = None
+    greenhouse_id: Optional[int] = None
     status: Optional[str] = Field(None, max_length=50)
 
 class Camera(CameraBase):

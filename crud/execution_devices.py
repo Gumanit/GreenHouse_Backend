@@ -42,7 +42,7 @@ def delete_device(id: int, db: Session = Depends(get_db)):
 
 
 def create_device_db(content: schemas.ExecutionDeviceCreate, db: Session):
-    db_execdev = schemas.ExecutionDevice(**content.model_dump)
+    db_execdev = models.ExecutionDevice(**content.model_dump())  # Исправлено: model_dump() и models.ExecutionDevice
     db.add(db_execdev)
     db.commit()
     db.refresh(db_execdev)
@@ -58,8 +58,8 @@ def read_devices_db(db: Session, skip: int, limit: int):
 def update_device_db(content: schemas.ExecutionDeviceUpdate, id: int, db: Session):
     db_updated = db.scalars(select(models.ExecutionDevice).where(models.ExecutionDevice.id == id)).first()
     if db_updated:
-        updated_data = schemas.ExecutionDevice(**content.model_dump(exclude_unset=True))
-        for field, value in updated_data.items():
+        update_data = content.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
             setattr(db_updated, field, value)
         db.commit()
         db.refresh(db_updated)

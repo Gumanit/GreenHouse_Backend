@@ -57,8 +57,8 @@ def read_cameras_db(skip: int, limit: int, db: Session):
 def update_camera_db(content: schemas.CameraUpdate, id: int, db: Session):
     updated_camera = db.scalars(select(models.Camera).where(models.Camera.id == id)).first()
     if updated_camera:
-        updated_data = schemas.Camera(**content.model_dump(exclude_unset=True))
-        for field, value in updated_data.items():
+        update_data = content.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
             setattr(updated_camera, field, value)
         db.commit()
         db.refresh(updated_camera)

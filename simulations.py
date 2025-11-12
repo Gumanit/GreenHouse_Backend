@@ -8,6 +8,7 @@ from decimal import Decimal
 from datetime import datetime
 import threading
 import time
+from crud.reports import create_report_row
 
 # Глобальная переменная для управления автоматической симуляцией
 simulation_task = None
@@ -108,6 +109,63 @@ def collect_readings_data(created_readings, db: Session = Depends(get_db)):
         reading_dict["greenhouse_description"] = greenhouse_info_dict["description"]
         readings_data.append(reading_dict)
     return readings_data
+
+def group_by_greenhouse_id(readings_data):
+    greenhouse_sensors = {}
+
+    for sensor in readings_data:
+        greenhouse_id = sensor['greenhouse_id']
+
+        if greenhouse_id not in greenhouse_sensors:
+            greenhouse_sensors[greenhouse_id] = []
+
+        greenhouse_sensors[greenhouse_id].append(sensor)
+
+    return greenhouse_sensors
+
+def get_predict(curr_sensor, other_sensors):
+    return -1
+
+def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
+    """
+    Создание одной строки отчета для теплицы
+    """
+    try:
+        # Инициализация строки отчета
+        row = {
+            "greenhouse_id": greenhouse_id,
+            "report_date": datetime.now()
+        }
+
+        # Обработка каждого датчика
+        for i in range(len(sensors)):
+            curr_sensor = sensors[i]
+
+            # Запись текущего значения
+            row[curr_sensor["type"]] = float(
+                curr_sensor["value"])  # В поле с названием типа сенсора заносим его значение
+
+            # Формирование массива других датчиков
+            if i > 0 and i < len(sensors) - 1:
+                other_sensors = sensors[:i] + sensors[i + 1:]
+            elif i == 0:
+                other_sensors = sensors[1:]
+            else:  # i == len(sensors) - 1
+                other_sensors = sensors[:i]
+
+            # Прогнозирование
+            prediction = get_predict(curr_sensor, other_sensors)
+            row[curr_sensor["type"] + "_pred"] = float(prediction)
+
+            # Формирование команды
+            row["command_" + curr_sensor["type"]] = "1"  # пока константа
+
+        # Сохранение в БД
+        return create_report_row(db, row)
+
+    except Exception as e:
+        db.rollback()
+        raise Exception(f"Ошибка при создании отчета для теплицы {greenhouse_id}: {str(e)}")
 
 # Endpoint симуляции
 @router.get("/simulate-reading/")

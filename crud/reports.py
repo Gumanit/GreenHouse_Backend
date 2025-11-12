@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import desc
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models
@@ -196,3 +196,27 @@ def get_reports_by_time_range_db(
         .limit(limit)
         .all()
     )
+
+
+def create_report_row(db: Session, row_data: dict):
+    """
+    Создание записи отчета в БД
+
+    Args:
+        db: подключение к БД
+        row_data: словарь с данными отчета
+
+    Returns:
+        созданная запись Report
+    """
+    # Добавляем дату создания отчета, если не указана
+    if "report_date" not in row_data:
+        row_data["report_date"] = datetime.now()
+
+    # Создаем объект модели Report из данных
+    db_report = models.Report(**row_data)
+
+    db.add(db_report)
+    db.commit()
+    db.refresh(db_report)
+    return db_report

@@ -117,14 +117,14 @@ class ExecutionDevice(ExecutionDeviceBase):
 
 class AgronomicRuleBase(BaseModel):
     type_crop: str = Field(max_length=255)
-    rule_params: Dict[str, Any]
+    rule_params: str
 
 class AgronomicRuleCreate(AgronomicRuleBase):
     pass
 
 class AgronomicRuleUpdate(BaseModel):
     type_crop: str | None = Field(None, max_length=255)
-    rule_params: Dict[str, Any] | None
+    rule_params: str | None
 
 class AgronomicRule(AgronomicRuleBase):
     id: int
@@ -136,14 +136,14 @@ class AgronomicRule(AgronomicRuleBase):
 
 class CameraBase(BaseModel):
     greenhouse_id: int
-    status: str = Field(le=50)
+    status: str = Field(max_length=50)
 
 class CameraCreate(CameraBase):
     pass
 
 class CameraUpdate(BaseModel):
     greehouse_id: Optional[int] = None
-    status: Optional[str] = Field(None, le=50)
+    status: Optional[str] = Field(None, max_length=50)
 
 class Camera(CameraBase):
     id: int

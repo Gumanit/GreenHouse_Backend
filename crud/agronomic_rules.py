@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -14,7 +16,7 @@ router = APIRouter(
 
 @router.post("/create_agronomic_rules", response_model=schemas.AgronomicRule)
 def create_agronomic_rule(new_agronomic_rule: schemas.AgronomicRuleCreate, db: Session = Depends(get_db)):
-     return create_agronomic_rule(new_agronomic_rule, db)
+     return create_agrorules_db(db, new_agronomic_rule)
 
 @router.get("/get_agronomic_rule/{agrorule_id}", response_model=schemas.AgronomicRule)
 def get_agrorule(agrorule_id: int, db: Session = Depends(get_db)):
@@ -24,9 +26,12 @@ def get_agrorule(agrorule_id: int, db: Session = Depends(get_db)):
     return db_agrorule
 
 @router.get("/get_agronomic_rules", response_model=List[schemas.AgronomicRule])
-def get_agrorules(skip: int, limit: int, db: Session = Depends(get_db)):
-    db_agrorules = get_agrorules_db(db, skip, limit)
-    return db_agrorules
+def get_agrorules(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    return get_agrorules_db(db, skip, limit)
 
 @router.put("/update/{agrorule_id}", response_model=schemas.AgronomicRule)
 def update_agrorule(agrorule_id: int, updated_rule: schemas.AgronomicRuleUpdate, db: Session = Depends(get_db)):
@@ -35,7 +40,7 @@ def update_agrorule(agrorule_id: int, updated_rule: schemas.AgronomicRuleUpdate,
         raise HTTPException(status_code=404, detail="Agronomic rule doesn't exist")
     return updated_rule_db
 
-@router.delete("/delete/{agrorule_id}", response_model=schemas.AgronomicRule)
+@router.delete("/delete/{agrorule_id}", status_code=200)
 def delete_agrorule(agrorule_id: int, db: Session = Depends(get_db)):
     deleted_rule = delete_agrorule_db(db, agrorule_id)
     if deleted_rule is None:
@@ -43,7 +48,9 @@ def delete_agrorule(agrorule_id: int, db: Session = Depends(get_db)):
     return {"message": "Agronomic rule deleted successfully"}
 
 def create_agrorules_db(db: Session, agrorules: schemas.AgronomicRuleCreate):
-    db_agrorules = models.AgronomicRule(**agrorules.model_dump())
+    agrorules_dict = agrorules.model_dump()
+    agrorules_dict["rule_params"] = json.dumps(agrorules_dict["rule_params"])  # ← строка!
+    db_agrorules = models.AgronomicRule(**agrorules_dict)
     db.add(db_agrorules)
     db.commit()
     db.refresh(db_agrorules)

@@ -18,10 +18,10 @@ class Greenhouse(Base):
     __tablename__ = 'greenhouses'
 
     greenhouse_id = Column(Integer, primary_key=True, autoincrement=True)
+    agrorule_id = Column(Integer, ForeignKey('agronomic_rules.id'), nullable=False)
     name = Column(String(255), nullable=False)
     location = Column(String(255))
     description = Column(Text)
-    agrorule_id = Column(Integer, ForeignKey('agronomic_rules.id'), nullable=False)
 
     agronomic_rule = relationship("AgronomicRule", back_populates="greenhouses")
     sensors = relationship("Sensor", back_populates="greenhouse", cascade="all, delete-orphan")

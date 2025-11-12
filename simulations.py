@@ -129,40 +129,55 @@ def group_by_greenhouse_id(readings_data):
 def get_predict(curr_sensor, other_sensors):
     return -1
 
+
 def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
     """
     Создание одной строки отчета для теплицы
     """
     try:
+        print(f"Создание отчета для теплицы {greenhouse_id} с {len(sensors)} датчиками")
+
         # Инициализация строки отчета
-        row = {"greenhouse_id": greenhouse_id}
+        row = {
+            "greenhouse_id": greenhouse_id,
+            "report_time": datetime.now()
+        }
 
-        # Обработка каждого датчика
-        for i in range(len(sensors)):
-            curr_sensor = sensors[i]
+        # Собираем данные по типам датчиков
+        sensor_data = {}
+        for sensor in sensors:
+            sensor_type = sensor["type"]
+            sensor_data[sensor_type] = {
+                "value": Decimal(str(float(sensor["value"]))),
+                "pred": Decimal("-1.0"),  # заглушка для прогноза
+                "command": Decimal("1.0")  # команда как Decimal
+            }
 
-            # Запись текущего значения
-            row[curr_sensor["type"]] = curr_sensor["value"]
+        # Заполняем поля отчета
+        if "temperature" in sensor_data:
+            row["temperature_value"] = sensor_data["temperature"]["value"]
+            row["temperature_pred"] = sensor_data["temperature"]["pred"]
+            row["command_temperature"] = sensor_data["temperature"]["command"]
 
-            # Формирование массива других датчиков
-            if i > 0 and i < len(sensors) - 1:
-                other_sensors = sensors[:i] + sensors[i + 1:]
-            elif i == 0:
-                other_sensors = sensors[1:]
-            else:  # i == len(sensors) - 1
-                other_sensors = sensors[:i]
+        if "humidity" in sensor_data:
+            row["humidity_value"] = sensor_data["humidity"]["value"]
+            row["humidity_pred"] = sensor_data["humidity"]["pred"]
+            row["command_humidity"] = sensor_data["humidity"]["command"]
 
-            # Прогнозирование
-            prediction = get_predict(curr_sensor, other_sensors)
-            row[curr_sensor["type"] + "_pred"] = prediction
+        if "co2" in sensor_data:
+            row["co2_value"] = sensor_data["co2"]["value"]
+            row["co2_pred"] = sensor_data["co2"]["pred"]
+            row["command_co2"] = sensor_data["co2"]["command"]
 
-            # Формирование команды
-            row["command_" + curr_sensor["type"]] = "1"
 
         # Сохранение в БД
-        return create_report_row(db, row)
+        from crud.reports import create_report_db
+        report_create = schemas.ReportCreate(**row)
+        result = create_report_db(db, report_create)
+        return result
 
     except Exception as e:
+        print(f"  ❌ Критическая ошибка: {e}")
         raise Exception(f"Ошибка при создании отчета для теплицы {greenhouse_id}: {str(e)}")
 
 # Глобальная переменная для управления периодическим созданием отчетов
@@ -181,10 +196,12 @@ def create_report_rows(db):
         dict: результат выполнения операции
     """
     try:
-        print(f"Начало создания отчетов: {datetime.now()}")
+
+        created_readings = create_single_reading(db, 0, 0)
 
         # 1. Сбор данных
-        readings_data = collect_readings_data(db)
+        #readings_data = collect_readings_data(db)
+        readings_data = created_readings
 
         if not readings_data:
             return {"status": "error", "message": "Нет данных для создания отчетов"}
@@ -209,7 +226,6 @@ def create_report_rows(db):
             "greenhouses_processed": len(greenhouses)
         }
 
-        print(f"Завершение создания отчетов: {result}")
         return result
 
     except Exception as e:

@@ -198,25 +198,20 @@ def get_reports_by_time_range_db(
     )
 
 
+# Добавим эту функцию в текущий файл или в crud/reports.py
 def create_report_row(db: Session, row_data: dict):
     """
-    Создание записи отчета в БД
-
-    Args:
-        db: подключение к БД
-        row_data: словарь с данными отчета
-
-    Returns:
-        созданная запись Report
+    Создание записи отчета в БД из словаря данных
     """
-    # Добавляем дату создания отчета, если не указана
-    if "report_date" not in row_data:
-        row_data["report_date"] = datetime.now()
+    try:
+        # Создаем объект модели Report из данных
+        db_report = models.Report(**row_data)
 
-    # Создаем объект модели Report из данных
-    db_report = models.Report(**row_data)
+        db.add(db_report)
+        db.commit()
+        db.refresh(db_report)
+        return db_report
 
-    db.add(db_report)
-    db.commit()
-    db.refresh(db_report)
-    return db_report
+    except Exception as e:
+        db.rollback()
+        raise e

@@ -9,6 +9,9 @@ from datetime import datetime
 import threading
 import time
 from crud.reports import create_report_row
+import time
+import threading
+from datetime import datetime
 
 # Глобальная переменная для управления автоматической симуляцией
 simulation_task = None
@@ -132,18 +135,14 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
     """
     try:
         # Инициализация строки отчета
-        row = {
-            "greenhouse_id": greenhouse_id,
-            "report_date": datetime.now()
-        }
+        row = {"greenhouse_id": greenhouse_id}
 
         # Обработка каждого датчика
         for i in range(len(sensors)):
             curr_sensor = sensors[i]
 
             # Запись текущего значения
-            row[curr_sensor["type"]] = float(
-                curr_sensor["value"])  # В поле с названием типа сенсора заносим его значение
+            row[curr_sensor["type"]] = curr_sensor["value"]
 
             # Формирование массива других датчиков
             if i > 0 and i < len(sensors) - 1:
@@ -155,17 +154,154 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
 
             # Прогнозирование
             prediction = get_predict(curr_sensor, other_sensors)
-            row[curr_sensor["type"] + "_pred"] = float(prediction)
+            row[curr_sensor["type"] + "_pred"] = prediction
 
             # Формирование команды
-            row["command_" + curr_sensor["type"]] = "1"  # пока константа
+            row["command_" + curr_sensor["type"]] = "1"
 
         # Сохранение в БД
         return create_report_row(db, row)
 
     except Exception as e:
-        db.rollback()
         raise Exception(f"Ошибка при создании отчета для теплицы {greenhouse_id}: {str(e)}")
+
+# Глобальная переменная для управления периодическим созданием отчетов
+reporting_active = False
+reporting_thread = None
+
+
+def create_report_rows(db):
+    """
+    Создание отчетов для всех теплиц
+
+    Args:
+        db: подключение к БД (Session)
+
+    Returns:
+        dict: результат выполнения операции
+    """
+    try:
+        print(f"Начало создания отчетов: {datetime.now()}")
+
+        # 1. Сбор данных
+        readings_data = collect_readings_data(db)
+
+        if not readings_data:
+            return {"status": "error", "message": "Нет данных для создания отчетов"}
+
+        # 2. Группировка по теплицам
+        greenhouses = group_by_greenhouse_id(readings_data)
+
+        # 3. Создание отчетов для каждой теплицы
+        reports_created = 0
+        for greenhouse_id, sensors in greenhouses.items():
+            try:
+                create_single_report_row(db, greenhouse_id, sensors)
+                reports_created += 1
+            except Exception as e:
+                print(f"Ошибка при создании отчета для теплицы {greenhouse_id}: {e}")
+
+        result = {
+            "status": "success",
+            "message": f"Создано отчетов: {reports_created} для {len(greenhouses)} теплиц",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "reports_created": reports_created,
+            "greenhouses_processed": len(greenhouses)
+        }
+
+        print(f"Завершение создания отчетов: {result}")
+        return result
+
+    except Exception as e:
+        error_msg = f"Ошибка при создании отчетов: {str(e)}"
+        print(error_msg)
+        return {"status": "error", "message": error_msg}
+
+
+def start_periodic_reporting(db: Session, interval_minutes: int = 3):
+    """
+    Запуск периодического создания отчетов
+
+    Args:
+        db: подключение к БД
+        interval_minutes: интервал в минутах
+    """
+    global reporting_active
+
+    def reporting_loop():
+        while reporting_active:
+            try:
+                create_report_rows(db)
+            except Exception as e:
+                print(f"Ошибка в периодическом создании отчетов: {e}")
+
+            # Ожидание указанного интервала
+            time.sleep(interval_minutes * 60)
+
+    reporting_active = True
+    global reporting_thread
+    reporting_thread = threading.Thread(target=reporting_loop, daemon=True)
+    reporting_thread.start()
+
+    return {"status": "started", "interval_minutes": interval_minutes}
+
+
+def stop_periodic_reporting():
+    """
+    Остановка периодического создания отчетов
+    """
+    global reporting_active
+    reporting_active = False
+
+    if reporting_thread and reporting_thread.is_alive():
+        reporting_thread.join(timeout=5)
+
+    return {"status": "stopped", "message": "Периодическое создание отчетов остановлено"}
+
+
+# Эндпоинты для управления периодическими отчетами
+@router.post("/start-periodic-reports/")
+def start_periodic_reports_endpoint(
+        background_tasks: BackgroundTasks,
+        interval_minutes: int = Query(3, description="Интервал создания отчетов в минутах"),
+        db: Session = Depends(get_db)
+):
+    """Запуск автоматического создания отчетов"""
+    global reporting_active
+
+    if reporting_active:
+        raise HTTPException(status_code=400, detail="Периодическое создание отчетов уже запущено")
+
+    result = start_periodic_reporting(db, interval_minutes)
+    return result
+
+
+@router.post("/stop-periodic-reports/")
+def stop_periodic_reports_endpoint():
+    """Остановка автоматического создания отчетов"""
+    global reporting_active
+
+    if not reporting_active:
+        raise HTTPException(status_code=400, detail="Периодическое создание отчетов не запущено")
+
+    result = stop_periodic_reporting()
+    return result
+
+
+@router.post("/create-reports-now/")
+def create_reports_now_endpoint(db: Session = Depends(get_db)):
+    """Немедленное создание отчетов"""
+    result = create_report_rows(db)
+    return result
+
+
+@router.get("/reporting-status/")
+def get_reporting_status():
+    """Получение статуса периодического создания отчетов"""
+    return {
+        "reporting_active": reporting_active,
+        "interval_minutes": 3
+    }
 
 # Endpoint симуляции
 @router.get("/simulate-reading/")

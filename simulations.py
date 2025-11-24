@@ -1,3 +1,7 @@
+import pickle
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
 from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, APIRouter
 from sqlalchemy.orm import Session
 import models, schemas
@@ -12,6 +16,8 @@ from crud.reports import create_report_row
 import time
 import threading
 from datetime import datetime
+import tensorflow as tf
+from tensorflow import keras
 
 # Глобальная переменная для управления автоматической симуляцией
 simulation_task = None
@@ -113,6 +119,7 @@ def collect_readings_data(created_readings, db: Session = Depends(get_db)):
         readings_data.append(reading_dict)
     return readings_data
 
+
 def group_by_greenhouse_id(readings_data):
     greenhouse_sensors = {}
 
@@ -126,32 +133,248 @@ def group_by_greenhouse_id(readings_data):
 
     return greenhouse_sensors
 
-def get_predict(curr_sensor, other_sensors):
-    return -1
+
+def predict_humidity_ml(sensor_data: dict, report_time: datetime,
+                        model_path: str = 'greenhouse_humidity_model_weights.pkl') -> Decimal:
+    """
+    ML предсказание влажности на основе весов модели
+    """
+    try:
+        # Загружаем веса модели
+        with open(model_path, 'rb') as f:
+            model_weights = pickle.load(f)
+
+        # Расчет освещенности
+        hour = report_time.hour
+        if 6 <= hour < 23:
+            illuminance = np.random.uniform(800, 2000)
+        else:
+            illuminance = np.random.uniform(0, 50)
+
+        # Подготовка признаков
+        features = {
+            'greenhous_temperature_celsius': float(sensor_data['temperature']),
+            'greenhouse_humidity_percentage': float(sensor_data['humidity']),
+            'greenhouse_illuminance_lux': illuminance,
+            'online_temperature_celsius': float(sensor_data['temperature']) - 2.0,
+            'online_humidity_percentage': float(sensor_data['humidity']) - 5.0,
+            'greenhouse_total_volatile_organic_compounds_ppb': 200.0,
+            'greenhouse_equivalent_co2_ppm': float(sensor_data['co2']),
+            'hour_sin': np.sin(2 * np.pi * report_time.hour / 24),
+            'hour_cos': np.cos(2 * np.pi * report_time.hour / 24),
+            'minute_sin': np.sin(2 * np.pi * report_time.minute / 60),
+            'minute_cos': np.cos(2 * np.pi * report_time.minute / 60),
+            'day_of_week_sin': np.sin(2 * np.pi * report_time.weekday() / 7),
+            'day_of_week_cos': np.cos(2 * np.pi * report_time.weekday() / 7),
+            'day_of_month_sin': np.sin(2 * np.pi * (report_time.day - 1) / 31),
+            'day_of_month_cos': np.cos(2 * np.pi * (report_time.day - 1) / 31),
+            'month_sin': np.sin(2 * np.pi * (report_time.month - 1) / 12),
+            'month_cos': np.cos(2 * np.pi * (report_time.month - 1) / 12),
+            'day_of_year_sin': np.sin(2 * np.pi * (report_time.timetuple().tm_yday - 1) / 365),
+            'day_of_year_cos': np.cos(2 * np.pi * (report_time.timetuple().tm_yday - 1) / 365)
+        }
+
+        # Создаем входные данные
+        input_df = pd.DataFrame([features])[model_weights['feature_names']]
+
+        # Масштабируем
+        input_scaled = model_weights['scaler'].transform(input_df)
+
+        # Прямой проход (предсказание) без использования класса LinearModel
+        # y_pred = X @ w + b
+        prediction = input_scaled @ model_weights['w'] + model_weights['b']
+
+        return Decimal(str(round(prediction[0], 2)))
+
+    except Exception as e:
+        print(f"⚠️ Ошибка ML предсказания влажности: {e}")
+        return Decimal("-1.0")
+
+
+
+
+
+def predict_co2_nn(sensor_data: dict, report_time: datetime,
+                           weights_path: str = 'greenhouse_co2_nn_weights.weights.h5',
+                           scalers_path: str = 'greenhouse_co2_nn_scalers.pkl') -> Decimal:
+    """
+    Предсказание CO2 с использованием весов нейронной сети
+    """
+
+    def create_co2_nn_model(input_dim=19):
+        """
+        Создание архитектуры нейронной сети (должна совпадать с обученной моделью)
+        """
+        model = keras.Sequential([
+            # Первый скрытый слой
+            keras.layers.Dense(128, activation='relu', input_shape=(input_dim,),
+                               kernel_regularizer=keras.regularizers.l2(0.001)),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.3),
+
+            # Второй скрытый слой
+            keras.layers.Dense(64, activation='relu',
+                               kernel_regularizer=keras.regularizers.l2(0.001)),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.3),
+
+            # Третий скрытый слой
+            keras.layers.Dense(32, activation='relu',
+                               kernel_regularizer=keras.regularizers.l2(0.001)),
+            keras.layers.Dropout(0.2),
+
+            # Выходной слой
+            keras.layers.Dense(1, activation='linear')
+        ])
+
+        return model
+
+    try:
+        # Загружаем scalers и метаданные
+        with open(scalers_path, 'rb') as f:
+            scalers_data = pickle.load(f)
+
+        scaler_X = scalers_data['scaler_X']
+        scaler_y = scalers_data['scaler_y']
+        feature_names = scalers_data['feature_names']
+        input_dim = scalers_data['input_dim']
+
+        print(f"  🔧 Загружены scalers. Размерность: {input_dim}, Признаков: {len(feature_names)}")
+
+        # Создаем модель с такой же архитектурой
+        model = create_co2_nn_model(input_dim=input_dim)
+
+        # Загружаем веса
+        model.load_weights(weights_path)
+        print("  🔧 Веса модели загружены")
+
+        # Компилируем модель
+        model.compile(
+            optimizer='adam',
+            loss='mse',
+            metrics=['mae']
+        )
+
+        # Расчет освещенности по времени суток
+        hour = report_time.hour
+        if 6 <= hour < 23:
+            illuminance = np.random.uniform(800, 2000)
+        else:
+            illuminance = np.random.uniform(0, 50)
+
+        # Подготовка признаков в ТОЧНОМ порядке как при обучении
+        features = {
+            'greenhous_temperature_celsius': float(sensor_data['temperature']),
+            'greenhouse_humidity_percentage': float(sensor_data['humidity']),
+            'greenhouse_illuminance_lux': illuminance,
+            'online_temperature_celsius': float(sensor_data['temperature']) - 2.0,
+            'online_humidity_percentage': float(sensor_data['humidity']) - 5.0,
+            'greenhouse_total_volatile_organic_compounds_ppb': 200.0,
+            'greenhouse_equivalent_co2_ppm': float(sensor_data['co2']),
+            'hour_sin': np.sin(2 * np.pi * report_time.hour / 24),
+            'hour_cos': np.cos(2 * np.pi * report_time.hour / 24),
+            'minute_sin': np.sin(2 * np.pi * report_time.minute / 60),
+            'minute_cos': np.cos(2 * np.pi * report_time.minute / 60),
+            'day_of_week_sin': np.sin(2 * np.pi * report_time.weekday() / 7),
+            'day_of_week_cos': np.cos(2 * np.pi * report_time.weekday() / 7),
+            'day_of_month_sin': np.sin(2 * np.pi * (report_time.day - 1) / 31),
+            'day_of_month_cos': np.cos(2 * np.pi * (report_time.day - 1) / 31),
+            'month_sin': np.sin(2 * np.pi * (report_time.month - 1) / 12),
+            'month_cos': np.cos(2 * np.pi * (report_time.month - 1) / 12),
+            'day_of_year_sin': np.sin(2 * np.pi * (report_time.timetuple().tm_yday - 1) / 365),
+            'day_of_year_cos': np.cos(2 * np.pi * (report_time.timetuple().tm_yday - 1) / 365)
+        }
+
+        # Создаем входные данные в ПРАВИЛЬНОМ порядке
+        input_data = np.array([[features[feature] for feature in feature_names]])
+        print(f"  🔧 Подготовлены данные. Форма: {input_data.shape}")
+
+        # Масштабируем входные данные
+        input_scaled = scaler_X.transform(input_data)
+
+        # Предсказание
+        prediction_scaled = model.predict(input_scaled, verbose=0)
+
+        # Обратное масштабирование предсказания
+        prediction = scaler_y.inverse_transform(prediction_scaled)
+
+        result = Decimal(str(round(prediction[0][0], 2)))
+        print(f"  🔧 Предсказание CO2: {result} ppm")
+
+        return result
+
+    except Exception as e:
+        print(f"⚠️ Ошибка предсказания CO2 (веса): {e}")
+        return Decimal("-1.0")
 
 
 def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
     """
-    Создание одной строки отчета для теплицы
+    Создание одной строки отчета для теплицы с ML предсказаниями
     """
     try:
         print(f"Создание отчета для теплицы {greenhouse_id} с {len(sensors)} датчиками")
 
         # Инициализация строки отчета
+        current_time = datetime.now()
         row = {
             "greenhouse_id": greenhouse_id,
-            "report_time": datetime.now()
+            "report_time": current_time
         }
 
         # Собираем данные по типам датчиков
         sensor_data = {}
+
+        # Сначала собираем все сырые данные
+        raw_sensor_data = {}
         for sensor in sensors:
             sensor_type = sensor["type"]
-            sensor_data[sensor_type] = {
-                "value": Decimal(str(float(sensor["value"]))),
-                "pred": Decimal("-1.0"),  # заглушка для прогноза
-                "command": Decimal("1.0")  # команда как Decimal
-            }
+            raw_sensor_data[sensor_type] = float(sensor["value"])
+
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
+        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
+            try:
+                ml_prediction_humidity = predict_humidity_ml(raw_sensor_data, current_time)
+                print(f"  ✅ ML предсказание влажности: {ml_prediction_humidity}%")
+            except Exception as e:
+                print(f"  ⚠️ Ошибка ML предсказания влажности: {e}")
+                ml_prediction_humidity = Decimal("-1.0")
+        else:
+            ml_prediction_humidity = Decimal("-1.0")
+
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ CO2 (НЕЙРОННАЯ СЕТЬ С ВЕСАМИ)
+        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
+            try:
+                ml_prediction_co2 = predict_co2_nn(raw_sensor_data, current_time)
+                print(f"  ✅ ML предсказание CO2: {ml_prediction_co2} ppm")
+            except Exception as e:
+                print(f"  ⚠️ Ошибка ML предсказания CO2: {e}")
+                ml_prediction_co2 = Decimal("-1.0")
+        else:
+            ml_prediction_co2 = Decimal("-1.0")
+
+        # Формируем финальные данные сенсоров
+        for sensor in sensors:
+            sensor_type = sensor["type"]
+
+            if sensor_type == "humidity":
+                sensor_data[sensor_type] = {
+                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "pred": ml_prediction_humidity,
+                    "command": Decimal("0.0")
+                }
+            elif sensor_type == "co2":
+                sensor_data[sensor_type] = {
+                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "pred": ml_prediction_co2,
+                    "command": Decimal("0.0")
+                }
+            else:
+                sensor_data[sensor_type] = {
+                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "pred": Decimal("-1.0"),
+                    "command": Decimal("0.0")
+                }
 
         # Заполняем поля отчета
         if "temperature" in sensor_data:
@@ -166,14 +389,15 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
 
         if "co2" in sensor_data:
             row["co2_value"] = sensor_data["co2"]["value"]
-            row["co2_pred"] = sensor_data["co2"]["pred"]
+            row["co2_pred"] = sensor_data["co2"]["pred"]  # 🔮 ML ПРЕДСКАЗАНИЕ CO2
             row["command_co2"] = sensor_data["co2"]["command"]
-
 
         # Сохранение в БД
         from crud.reports import create_report_db
         report_create = schemas.ReportCreate(**row)
         result = create_report_db(db, report_create)
+
+        print(f"  ✅ Отчет создан. Предсказания - Влажность: {ml_prediction_humidity}%, CO2: {ml_prediction_co2} ppm")
         return result
 
     except Exception as e:

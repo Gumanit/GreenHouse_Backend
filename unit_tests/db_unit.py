@@ -303,7 +303,3 @@ class TestDatabaseResilience:
 
         assert unique_greenhouse is not None
         assert unique_greenhouse.greenhouse_id == test_data['greenhouse'].greenhouse_id
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

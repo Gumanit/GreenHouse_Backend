@@ -6,7 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, API
 from sqlalchemy.orm import Session
 import models, schemas
 from crud.sensors import get_sensor_info, get_greenhouse_info
-from database import SessionLocal,  get_db
+from database import SessionLocal, get_db
 import random
 from decimal import Decimal
 from datetime import datetime
@@ -18,15 +18,47 @@ import threading
 from datetime import datetime
 import tensorflow as tf
 from tensorflow import keras
+import asyncio
+from typing import Dict, Any
+from contextlib import asynccontextmanager
 
-# Глобальная переменная для управления автоматической симуляцией
+# Глобальные переменные для хранения показаний в памяти
+current_sensor_readings: Dict[str, Any] = {}
+readings_lock = asyncio.Lock()
 simulation_task = None
 simulation_running = False
+reporting_active = False
+reporting_thread = None
 
-router = APIRouter(
-    prefix="/simulations",
-    tags=["simulations"],
-)
+# Флаг для управления фоновой задачей
+background_task_running = False
+background_task = None
+
+def get_current_season_and_time():
+    """Определение текущего времени года и времени суток"""
+    now = datetime.now()
+    month = now.month
+    hour = now.hour
+
+    # Определение времени года
+    if 3 <= month <= 5:  # март-май
+        season = 3  # весна
+    elif 6 <= month <= 8:  # июнь-август
+        season = 0  # лето
+    elif 9 <= month <= 11:  # сентябрь-ноябрь
+        season = 1  # осень
+    else:  # декабрь-февраль
+        season = 2  # зима
+
+    # Определение времени суток
+    if 6 <= hour < 22:  # 6:00-21:59
+        time_of_day = 0  # день
+    else:
+        time_of_day = 1  # ночь
+
+    return season, time_of_day
+
+season, time_of_day = get_current_season_and_time()
 
 def generate_sensor_data(season, time_of_day):
     """Генерация данных датчиков"""
@@ -36,10 +68,10 @@ def generate_sensor_data(season, time_of_day):
 
     def generate_temperature(season, time_of_day):
         season_temps = {
-            0: {'day': (20, 35), 'night': (15, 25)},
-            1: {'day': (10, 20), 'night': (5, 15)},
-            2: {'day': (5, 15), 'night': (0, 10)},
-            3: {'day': (15, 25), 'night': (10, 18)}
+            0: {'day': (20, 35), 'night': (15, 25)},  # лето
+            1: {'day': (10, 20), 'night': (5, 15)},  # осень
+            2: {'day': (5, 15), 'night': (0, 10)},  # зима
+            3: {'day': (15, 25), 'night': (10, 18)}  # весна
         }
         time_key = 'day' if time_of_day == 0 else 'night'
         temp_range = season_temps[season][time_key]
@@ -47,10 +79,10 @@ def generate_sensor_data(season, time_of_day):
 
     def generate_humidity(season, time_of_day):
         season_humidity = {
-            0: {'day': (40, 70), 'night': (50, 80)},
-            1: {'day': (50, 80), 'night': (60, 90)},
-            2: {'day': (30, 60), 'night': (40, 70)},
-            3: {'day': (40, 75), 'night': (50, 85)}
+            0: {'day': (40, 70), 'night': (50, 80)},  # лето
+            1: {'day': (50, 80), 'night': (60, 90)},  # осень
+            2: {'day': (30, 60), 'night': (40, 70)},  # зима
+            3: {'day': (40, 75), 'night': (50, 85)}  # весна
         }
         time_key = 'day' if time_of_day == 0 else 'night'
         humidity_range = season_humidity[season][time_key]
@@ -63,17 +95,256 @@ def generate_sensor_data(season, time_of_day):
     }
 
 
+async def update_sensor_readings(db: Session):
+    """Обновление показаний датчиков в памяти сервера для текущего времени"""
+    global current_sensor_readings
+
+    try:
+        from crud.sensors import get_sensors_db
+        sensors = get_sensors_db(db)
+
+        if not sensors:
+            print("В базе нет датчиков")
+            return
+
+        print(f"Генерация показаний для: время года={season}, время суток={time_of_day}")
+
+        # Фильтруем датчики по типам
+        temp_sensors = [s for s in sensors if s.type == 'temperature']
+        humidity_sensors = [s for s in sensors if s.type == 'humidity']
+        co2_sensors = [s for s in sensors if s.type == 'co2']
+
+        # Генерируем данные только для текущего времени
+        sensor_data = generate_sensor_data(season, time_of_day)
+
+        sensor_readings = []
+        for temp_sensor in temp_sensors:
+            if temp_sensor:
+                sensor_readings.append({
+                    "sensor_id": temp_sensor.sensor_id,
+                    "value": sensor_data['temperature'],
+                    "type": "temperature"
+                })
+        for humidity_sensor in humidity_sensors:
+            if humidity_sensor:
+                sensor_readings.append({
+                    "sensor_id": humidity_sensor.sensor_id,
+                    "value": sensor_data['humidity'],
+                    "type": "humidity"
+                })
+        for co2_sensor in co2_sensors:
+            if co2_sensor:
+                sensor_readings.append({
+                    "sensor_id": co2_sensor.sensor_id,
+                    "value": sensor_data['co2'],
+                    "type": "co2"
+                })
+
+        # Обогащаем данные дополнительной информацией
+        enriched_readings = []
+        for reading in sensor_readings:
+            reading_dict = {
+                "sensor_id": reading["sensor_id"],
+                "value": reading["value"],
+                "type": reading["type"],
+                "reading_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            try:
+                additional_sensor_info_dict = get_sensor_info(db, reading["sensor_id"])
+                greenhouse_id = additional_sensor_info_dict['greenhouse_id']
+                greenhouse_info_dict = get_greenhouse_info(db, greenhouse_id)
+
+                reading_dict["greenhouse_id"] = additional_sensor_info_dict["greenhouse_id"]
+                reading_dict["greenhouse_name"] = greenhouse_info_dict["greenhouse_name"]
+                reading_dict["greenhouse_location"] = greenhouse_info_dict["location"]
+                reading_dict["greenhouse_description"] = greenhouse_info_dict["description"]
+            except Exception as e:
+                print(f"Ошибка при обогащении данных датчика {reading['sensor_id']}: {e}")
+
+            enriched_readings.append(reading_dict)
+
+        # Сохраняем только текущие показания
+        readings = {
+            "readings": enriched_readings,
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "season": season,
+                "time_of_day": time_of_day,
+                "season_name": {0: "лето", 1: "осень", 2: "зима", 3: "весна"}[season],
+                "time_of_day_name": "день" if time_of_day == 0 else "ночь"
+            }
+        }
+
+        async with readings_lock:
+            current_sensor_readings = readings
+
+        print(f"Показания обновлены в {datetime.now()}: {len(enriched_readings)} датчиков")
+
+    except Exception as e:
+        print(f"Ошибка при обновлении показаний: {str(e)}")
+
+
+async def continuous_sensor_updates():
+    """Непрерывное обновление показаний каждые 3 минуты"""
+    global background_task_running
+
+    while background_task_running:
+        try:
+            # Получаем сессию базы данных для каждого обновления
+            db = next(get_db())
+            await update_sensor_readings(db)
+            db.close()
+        except Exception as e:
+            print(f"Ошибка в фоновой задаче обновления показаний: {str(e)}")
+
+        # Ждем 3 минуты (180 секунд)
+        for _ in range(180):
+            if not background_task_running:
+                break
+            await asyncio.sleep(1)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan менеджер для управления событиями запуска и остановки"""
+    global background_task_running, background_task
+
+    # Startup
+    print("Запуск фоновой задачи обновления показаний...")
+    background_task_running = True
+    background_task = asyncio.create_task(continuous_sensor_updates())
+
+    yield
+
+    # Shutdown
+    print("Остановка фоновой задачи обновления показаний...")
+    background_task_running = False
+    if background_task:
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            print("Фоновая задача успешно остановлена")
+
+
+router = APIRouter(
+    prefix="/simulations",
+    tags=["simulations"],
+)
+
+
+@router.get("/simulate-reading/")
+async def simulate_reading(
+        vg: int | None = Query(None,
+                                  description="Время года: 0-лето, 1-осень, 2-зима, 3-весна (если не указано - используется текущее)"),
+        vs: int | None = Query(None,
+                                  description="Время суток: 0-день, 1-ночь (если не указано - используется текущее)"),
+        db: Session = Depends(get_db)
+):
+    """Получение текущих показаний датчиков из памяти сервера"""
+    global current_sensor_readings
+
+    # Если параметры не указаны, используем текущее время
+    if vg is None or vs is None:
+        current_season, current_time_of_day = get_current_season_and_time()
+        vg = vg if vg is not None else current_season
+        vs = vs if vs is not None else current_time_of_day
+
+    # Проверяем, есть ли актуальные данные в кэше
+    async with readings_lock:
+        if current_sensor_readings:
+            cached_season = current_sensor_readings["metadata"]["season"]
+            cached_time_of_day = current_sensor_readings["metadata"]["time_of_day"]
+
+            # Если запрашиваются текущие данные и они актуальны - возвращаем из кэша
+            if vg == cached_season and vs == cached_time_of_day:
+                return {
+                    "readings": current_sensor_readings["readings"],
+                    "metadata": current_sensor_readings["metadata"],
+                    "cached": True
+                }
+
+    # Если данных нет или они неактуальны - генерируем новые
+    await update_sensor_readings(db)
+
+    async with readings_lock:
+        if not current_sensor_readings:
+            return {"error": "Не удалось сгенерировать показания"}
+
+        return {
+            "readings": current_sensor_readings["readings"],
+            "metadata": current_sensor_readings["metadata"],
+            "cached": False
+        }
+
+
+@router.get("/simulate-reading/current")
+async def get_current_readings():
+    """Получение текущих показаний (только из кэша)"""
+    global current_sensor_readings
+
+    async with readings_lock:
+        if not current_sensor_readings:
+            return {"error": "Показания еще не сгенерированы"}
+
+        return {
+            "readings": current_sensor_readings["readings"],
+            "metadata": current_sensor_readings["metadata"],
+            "cached": True
+        }
+
+
+@router.post("/simulate-reading/force-update")
+async def force_update_readings(db: Session = Depends(get_db)):
+    """Принудительное обновление показаний"""
+    await update_sensor_readings(db)
+
+    async with readings_lock:
+        has_data = bool(current_sensor_readings)
+
+    return {
+        "status": "success" if has_data else "no_data",
+        "timestamp": datetime.now().isoformat(),
+        "current_data": current_sensor_readings["metadata"] if has_data else None
+    }
+
+
 def create_single_reading(db: Session, vg: int, vs: int):
     """Создание одного набора показаний для всех датчиков"""
+
+    # Простая синхронная проверка кэша без асинхронности
+    def check_cache_sync():
+        global current_sensor_readings
+
+        # Используем блокировку в синхронном контексте
+        # Для простоты временно обходим блокировку, так как это read-only операция
+        if current_sensor_readings:
+            cached_season = current_sensor_readings["metadata"]["season"]
+            cached_time_of_day = current_sensor_readings["metadata"]["time_of_day"]
+
+            # Если запрашиваемые параметры совпадают с сохраненными - возвращаем данные
+            if vg == cached_season and vs == cached_time_of_day:
+                return current_sensor_readings["readings"]
+        return None
+
+    # Пытаемся получить данные из кэша
+    cached_readings = check_cache_sync()
+
+    if cached_readings:
+        print("Данные получены из кэша")
+        return cached_readings
+
+    print("Данные не найдены в кэше, генерируем новые...")
+
+    # Если в кэше нет данных, генерируем новые
     try:
-        # Получаем датчики из базы
         from crud.sensors import get_sensors_db
         sensors = get_sensors_db(db)
 
         if not sensors:
             raise Exception("В базе нет датчиков. Сначала создайте датчики через API /sensors/")
 
-        # Фильтруем датчики по типам
         temp_sensors = [s for s in sensors if s.type == 'temperature']
         humidity_sensors = [s for s in sensors if s.type == 'humidity']
         co2_sensors = [s for s in sensors if s.type == 'co2']
@@ -330,29 +601,8 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
         if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
             try:
-                ml_prediction_humidity = predict_ml(raw_sensor_data, current_time, 'greenhouse_humidity_model_weights.pkl')
-            except Exception as e:
-                print(f"  ⚠️ Ошибка ML предсказания влажности: {e}")
-                ml_prediction_humidity = Decimal("-1.0")
-        else:
-            ml_prediction_humidity = Decimal("-1.0")
-
-        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ CO2 (НЕЙРОННАЯ СЕТЬ С ВЕСАМИ)
-        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
-            try:
-                ml_prediction_co2 = predict_co2_nn(raw_sensor_data, current_time)
-            except Exception as e:
-                print(f"  ⚠️ Ошибка ML предсказания CO2: {e}")
-                ml_prediction_co2 = Decimal("-1.0")
-        else:
-            ml_prediction_co2 = Decimal("-1.0")
-
-        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
-        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
-            try:
                 ml_prediction_humidity = predict_ml(raw_sensor_data, current_time,
                                                     'greenhouse_humidity_model_weights.pkl')
-                print(f"  ✅ ML предсказание влажности: {ml_prediction_humidity}%")
             except Exception as e:
                 print(f"  ⚠️ Ошибка ML предсказания влажности: {e}")
                 ml_prediction_humidity = Decimal("-1.0")
@@ -492,10 +742,9 @@ def create_report_rows(db):
     """
     try:
 
-        created_readings = create_single_reading(db, 0, 0)
+        created_readings = create_single_reading(db, season, time_of_day)
 
         # 1. Сбор данных
-        #readings_data = collect_readings_data(db)
         readings_data = created_readings
 
         if not readings_data:
@@ -617,8 +866,8 @@ def get_reporting_status():
 # Endpoint симуляции
 @router.get("/simulate-reading/")
 def simulate_reading(
-        vg: int = Query(0, description="Время года: 0-лето, 1-осень, 2-зима, 3-весна"),
-        vs: int = Query(0, description="Время суток: 0-день, 1-ночь"),
+        vg: int = Query(season, description="Время года: 0-лето, 1-осень, 2-зима, 3-весна"),
+        vs: int = Query(time_of_day, description="Время суток: 0-день, 1-ночь"),
         db: Session = Depends(get_db)
 ):
     """Симуляция одного измерения"""

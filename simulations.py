@@ -134,10 +134,9 @@ def group_by_greenhouse_id(readings_data):
     return greenhouse_sensors
 
 
-def predict_humidity_ml(sensor_data: dict, report_time: datetime,
-                        model_path: str = 'greenhouse_humidity_model_weights.pkl') -> Decimal:
+def predict_ml(sensor_data: dict, report_time: datetime, model_path: str) -> Decimal:
     """
-    ML предсказание влажности на основе весов модели
+    ML предсказания на основе весов моделей
     """
     try:
         # Загружаем веса модели
@@ -189,9 +188,6 @@ def predict_humidity_ml(sensor_data: dict, report_time: datetime,
     except Exception as e:
         print(f"⚠️ Ошибка ML предсказания влажности: {e}")
         return Decimal("-1.0")
-
-
-
 
 
 def predict_co2_nn(sensor_data: dict, report_time: datetime,
@@ -334,7 +330,28 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
         if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
             try:
-                ml_prediction_humidity = predict_humidity_ml(raw_sensor_data, current_time)
+                ml_prediction_humidity = predict_ml(raw_sensor_data, current_time, 'greenhouse_humidity_model_weights.pkl')
+            except Exception as e:
+                print(f"  ⚠️ Ошибка ML предсказания влажности: {e}")
+                ml_prediction_humidity = Decimal("-1.0")
+        else:
+            ml_prediction_humidity = Decimal("-1.0")
+
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ CO2 (НЕЙРОННАЯ СЕТЬ С ВЕСАМИ)
+        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
+            try:
+                ml_prediction_co2 = predict_co2_nn(raw_sensor_data, current_time)
+            except Exception as e:
+                print(f"  ⚠️ Ошибка ML предсказания CO2: {e}")
+                ml_prediction_co2 = Decimal("-1.0")
+        else:
+            ml_prediction_co2 = Decimal("-1.0")
+
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
+        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
+            try:
+                ml_prediction_humidity = predict_ml(raw_sensor_data, current_time,
+                                                    'greenhouse_humidity_model_weights.pkl')
                 print(f"  ✅ ML предсказание влажности: {ml_prediction_humidity}%")
             except Exception as e:
                 print(f"  ⚠️ Ошибка ML предсказания влажности: {e}")
@@ -353,25 +370,79 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         else:
             ml_prediction_co2 = Decimal("-1.0")
 
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ТЕМПЕРАТУРЫ
+        if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
+            try:
+                ml_prediction_temperature = predict_ml(raw_sensor_data, current_time,
+                                                       'greenhouse_temperature_model_weights.pkl')
+                print(f"  ✅ ML предсказание температуры: {ml_prediction_temperature}°C")
+            except Exception as e:
+                print(f"  ⚠️ Ошибка ML предсказания температуры: {e}")
+                ml_prediction_temperature = Decimal("-1.0")
+        else:
+            ml_prediction_temperature = Decimal("-1.0")
+
         # Формируем финальные данные сенсоров
         for sensor in sensors:
             sensor_type = sensor["type"]
+            curr_val_sensor = Decimal(str(raw_sensor_data[sensor_type]))
 
             if sensor_type == "humidity":
+                if ml_prediction_humidity != Decimal("-1.0"):
+                    curr_val_float = float(curr_val_sensor)
+                    pred_val_float = float(ml_prediction_humidity)
+
+                    # Процент отклонения: (предсказание - текущее) / текущее * 100%
+                    deviation_percent = ((pred_val_float - curr_val_float) / curr_val_float) * 100
+                    command_value = max(-1.0, min(1.0, deviation_percent / 10))
+                else:
+                    command_value = Decimal("0.0")
+
                 sensor_data[sensor_type] = {
-                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "value": curr_val_sensor,
                     "pred": ml_prediction_humidity,
-                    "command": Decimal("0.0")
+                    "command": Decimal(str(round(command_value, 2)))
                 }
+
             elif sensor_type == "co2":
+                if ml_prediction_co2 != Decimal("-1.0"):
+                    # Преобразуем в float для вычислений
+                    curr_val_float = float(curr_val_sensor)
+                    pred_val_float = float(ml_prediction_co2)
+
+                    # Для CO2 используем абсолютное отклонение (ppm)
+                    deviation_absolute = pred_val_float - curr_val_float
+                    command_value = max(-1.0, min(1.0, deviation_absolute / 200))
+                else:
+                    command_value = Decimal("0.0")
+
                 sensor_data[sensor_type] = {
-                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "value": curr_val_sensor,
                     "pred": ml_prediction_co2,
-                    "command": Decimal("0.0")
+                    "command": Decimal(str(round(command_value, 2)))
+                }
+
+            elif sensor_type == "temperature":
+                if ml_prediction_temperature != Decimal("-1.0"):
+                    # Преобразуем в float для вычислений
+                    curr_val_float = float(curr_val_sensor)
+                    pred_val_float = float(ml_prediction_temperature)
+
+                    # Абсолютное отклонение для температуры (°C)
+                    deviation_absolute = pred_val_float - curr_val_float
+                    command_value = max(-1.0, min(1.0, deviation_absolute / 5))
+                else:
+                    command_value = Decimal("0.0")
+
+                sensor_data[sensor_type] = {
+                    "value": curr_val_sensor,
+                    "pred": ml_prediction_temperature,
+                    "command": Decimal(str(round(command_value, 2)))
                 }
             else:
+                # Для других датчиков
                 sensor_data[sensor_type] = {
-                    "value": Decimal(str(raw_sensor_data[sensor_type])),
+                    "value": curr_val_sensor,
                     "pred": Decimal("-1.0"),
                     "command": Decimal("0.0")
                 }

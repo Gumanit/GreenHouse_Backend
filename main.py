@@ -58,13 +58,13 @@ app = FastAPI(
 
 # Подключаем роутеры
 app.include_router(simulations_router)
+app.include_router(admin_router)
 app.include_router(greenhouses_router)
 app.include_router(sensors_router)
 app.include_router(report_router)
 app.include_router(agronomic_rules_router)
 app.include_router(execution_devices_router)
 app.include_router(cameras_router)
-app.include_router(admin_router)
 
 
 if __name__ == "__main__":

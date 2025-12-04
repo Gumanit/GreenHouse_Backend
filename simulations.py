@@ -677,7 +677,7 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                 }
                 # current_exec_dev_readings[f"greenhouse{greenhouse_id}_humidity_command"] = sensor_data[sensor_type][
                 #     "command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_command"] = sensor_data[sensor_type]["command"]
+                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"] = sensor_data[sensor_type]["command"]
 
             elif sensor_type == "co2":
                 if ml_prediction_co2 != Decimal("-1.0"):
@@ -697,7 +697,7 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     "command": Decimal(str(round(command_value, 2)))
                 }
                 # current_exec_dev_readings[f"greenhouse{greenhouse_id}_co2_command"] = sensor_data[sensor_type]["command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_command"] = sensor_data[sensor_type]["command"]
+                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"] = sensor_data[sensor_type]["command"]
 
             elif sensor_type == "temperature":
                 if ml_prediction_temperature != Decimal("-1.0"):
@@ -717,7 +717,7 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     "command": Decimal(str(round(command_value, 2)))
                 }
                 # current_exec_dev_readings[f"greenhouse{greenhouse_id}_temperature_command"] = sensor_data[sensor_type]["command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_command"] = sensor_data[sensor_type]["command"]
+                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"] = sensor_data[sensor_type]["command"]
             else:
                 # Для других датчиков
                 sensor_data[sensor_type] = {

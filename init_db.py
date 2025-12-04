@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import get_db
-from models import AgronomicRule, Greenhouse, Sensor
+from models import AgronomicRule, Greenhouse, Sensor, ExecutionDevice
 
 router = APIRouter(
     prefix="/admin",
@@ -115,6 +115,41 @@ def clear_and_seed_db(db: Session):
                     db.add(sensor)
 
             print("Сенсоры добавлены")
+
+            # 4. Добавляем исполнительные устройства
+            execution_devices_data = [
+                # Теплица 1: сенсоры с ID 1-3 (temperature=1, humidity=2, co2=3)
+                {"greenhouse_id": 1, "sensor_id": 1, "type": "temperature_controller"},
+                {"greenhouse_id": 1, "sensor_id": 2, "type": "humidity_controller"},
+                {"greenhouse_id": 1, "sensor_id": 3, "type": "co2_controller"},
+
+                # Теплица 2: сенсоры с ID 4-6
+                {"greenhouse_id": 2, "sensor_id": 4, "type": "temperature_controller"},
+                {"greenhouse_id": 2, "sensor_id": 5, "type": "humidity_controller"},
+                {"greenhouse_id": 2, "sensor_id": 6, "type": "co2_controller"},
+
+                # Теплица 3: сенсоры с ID 7-9
+                {"greenhouse_id": 3, "sensor_id": 7, "type": "temperature_controller"},
+                {"greenhouse_id": 3, "sensor_id": 8, "type": "humidity_controller"},
+                {"greenhouse_id": 3, "sensor_id": 9, "type": "co2_controller"},
+
+                # Теплица 4: сенсоры с ID 10-12
+                {"greenhouse_id": 4, "sensor_id": 10, "type": "temperature_controller"},
+                {"greenhouse_id": 4, "sensor_id": 11, "type": "humidity_controller"},
+                {"greenhouse_id": 4, "sensor_id": 12, "type": "co2_controller"},
+
+                # Теплица 5: сенсоры с ID 13-15
+                {"greenhouse_id": 5, "sensor_id": 13, "type": "temperature_controller"},
+                {"greenhouse_id": 5, "sensor_id": 14, "type": "humidity_controller"},
+                {"greenhouse_id": 5, "sensor_id": 15, "type": "co2_controller"},
+            ]
+
+            for device_data in execution_devices_data:
+                device = ExecutionDevice(**device_data)
+                db.add(device)
+
+            db.flush()
+            print("Исполнительные устройства добавлены")
 
             # Финальный коммит всех изменений
             db.commit()

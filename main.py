@@ -21,6 +21,7 @@ from crud.agronomic_rules import router as agronomic_rules_router
 from crud.execution_devices import router as execution_devices_router
 from crud.cameras import router as cameras_router
 from init_db import router as admin_router
+from crud.users import router as user_router
 
 
 @asynccontextmanager
@@ -67,6 +68,7 @@ app.include_router(report_router)
 app.include_router(agronomic_rules_router)
 app.include_router(execution_devices_router)
 app.include_router(cameras_router)
+app.include_router(user_router)
 
 
 if __name__ == "__main__":

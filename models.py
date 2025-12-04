@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DECIMAL, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, DECIMAL, DateTime, ForeignKey, func, Boolean
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -80,3 +80,13 @@ class Camera(Base):
     status = Column(String(50), default="active")
 
     greenhouse = relationship("Greenhouse", back_populates="cameras")
+
+
+class User(Base):
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    login = Column(String(255), nullable=False)
+    password = Column(String(255), nullable=False)
+    is_sudo = Column(Boolean, nullable=False)
+    description = Column(String(100))

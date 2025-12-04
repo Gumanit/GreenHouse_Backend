@@ -1,7 +1,9 @@
-from pydantic import BaseModel, ConfigDict, condecimal, Field
+from pydantic import BaseModel, ConfigDict, condecimal, Field, EmailStr, constr, StringConstraints
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any, Union, Annotated
+
+from sqlalchemy import Boolean
 
 '''
 Схемы для Greenhouse
@@ -147,4 +149,51 @@ class CameraUpdate(BaseModel):
 
 class Camera(CameraBase):
     id: int
+    model_config = ConfigDict(from_attributes=True)
+
+'''
+Схемы для User
+'''
+
+PhoneNumber = Annotated[
+    str,
+    StringConstraints(min_length=11, max_length=11, pattern=r'^[78]\d{10}$', strip_whitespace=True)
+]
+LoginType = Union[EmailStr, PhoneNumber]
+
+class UserBase(BaseModel):
+    login: LoginType
+    password: str = Field(
+        min_length=8,
+        max_length=50,
+        description="Пароль (8-50 символов)"
+    )
+    is_sudo: bool
+    description: str | None = Field(None, max_length=100)
+
+class UserCreate(UserBase):
+    pass
+
+
+class UserUpdate(BaseModel):
+    """Схема для обновления пользователя"""
+    password: str | None = Field(
+        None,
+        min_length=8,
+        max_length=50,
+        description="Новый пароль (8-50 символов)"
+    )
+    is_sudo: bool | None = None
+    description: str | None = Field(
+        None,
+        max_length=100,
+        description="Описание пользователя"
+    )
+
+
+class User(BaseModel):
+    id: int
+    login: LoginType
+    is_sudo: bool
+    description: str | None = Field(None, max_length=100)
     model_config = ConfigDict(from_attributes=True)

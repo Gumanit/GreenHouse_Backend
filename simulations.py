@@ -595,10 +595,20 @@ def predict_co2_nn(sensor_data: dict, report_time: datetime,
         return Decimal("-1.0")
 
 
+# Глобальная переменная на уровне модуля
+current_exec_dev_readings = {}
+
 def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
     """
     Создание одной строки отчета для теплицы с ML предсказаниями
     """
+    from crud.execution_devices import get_executive_devices_by_greenhouse
+
+    devices_in_greenhouse = [
+        device.type
+        for device in get_executive_devices_by_greenhouse(greenhouse_id, db)
+    ]
+
     try:
         print(f"Создание отчета для теплицы {greenhouse_id} с {len(sensors)} датчиками")
 
@@ -618,7 +628,7 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
             sensor_type = sensor["type"]
             raw_sensor_data[sensor_type] = float(sensor["value"])
 
-        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ ВЛАЖНОСТИ
+        # 🔮 ML ПРЕДСКАЗАНИЯ
         if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
             try:
                 ml_prediction_humidity = predict_ml(raw_sensor_data, current_time,
@@ -629,7 +639,7 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         else:
             ml_prediction_humidity = Decimal("-1.0")
 
-        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ CO2 (НЕЙРОННАЯ СЕТЬ С ВЕСАМИ)
+        # 🔮 ML ПРЕДСКАЗАНИЕ ДЛЯ CO2
         if all(key in raw_sensor_data for key in ['temperature', 'humidity', 'co2']):
             try:
                 ml_prediction_co2 = predict_co2_nn(raw_sensor_data, current_time)
@@ -652,9 +662,23 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         else:
             ml_prediction_temperature = Decimal("-1.0")
 
-        current_exec_dev_readings[f"greenhouse_{greenhouse_id}"] = {}
+        # ИНИЦИАЛИЗАЦИЯ ТОЛЬКО ПРИ ПЕРВОМ ВЫЗОВЕ ДЛЯ ДАННОЙ ТЕПЛИЦЫ
+        # И ТОЛЬКО ДЛЯ ТЕХ КОНТРОЛЛЕРОВ, КОТОРЫЕ ЕСТЬ В ТЕПЛИЦЕ
+        if f"greenhouse_{greenhouse_id}" not in current_exec_dev_readings:
+            greenhouse_readings = {}
 
-        # Формируем финальные данные сенсоров
+            if "temperature_controller" in devices_in_greenhouse:
+                greenhouse_readings["temperature_power"] = Decimal("0")
+
+            if "humidity_controller" in devices_in_greenhouse:
+                greenhouse_readings["humidity_power"] = Decimal("0")
+
+            if "co2_controller" in devices_in_greenhouse:
+                greenhouse_readings["co2_power"] = Decimal("0")
+
+            current_exec_dev_readings[f"greenhouse_{greenhouse_id}"] = greenhouse_readings
+
+        # ТЕПЕРЬ ПРОВЕРЯЕМ ПЕРЕД ДОБАВЛЕНИЕМ МОЩНОСТИ
         for sensor in sensors:
             sensor_type = sensor["type"]
             curr_val_sensor = Decimal(str(raw_sensor_data[sensor_type]))
@@ -664,7 +688,6 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     curr_val_float = float(curr_val_sensor)
                     pred_val_float = float(ml_prediction_humidity)
 
-                    # Процент отклонения: (предсказание - текущее) / текущее * 100%
                     deviation_percent = ((pred_val_float - curr_val_float) / curr_val_float) * 100
                     command_value = deviation_percent
                 else:
@@ -675,17 +698,17 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     "pred": ml_prediction_humidity,
                     "command": Decimal(str(round(command_value, 2)))
                 }
-                # current_exec_dev_readings[f"greenhouse{greenhouse_id}_humidity_command"] = sensor_data[sensor_type][
-                #     "command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"] = sensor_data[sensor_type]["command"]
+
+                # Проверяем есть ли такой контроллер перед добавлением
+                if "humidity_controller" in devices_in_greenhouse:
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"] += \
+                    sensor_data[sensor_type]["command"]
 
             elif sensor_type == "co2":
                 if ml_prediction_co2 != Decimal("-1.0"):
-                    # Преобразуем в float для вычислений
                     curr_val_float = float(curr_val_sensor)
                     pred_val_float = float(ml_prediction_co2)
 
-                    # Для CO2 используем абсолютное отклонение (ppm)
                     deviation_absolute = pred_val_float - curr_val_float
                     command_value = max(-1.0, min(1.0, deviation_absolute / 200))
                 else:
@@ -696,16 +719,17 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     "pred": ml_prediction_co2,
                     "command": Decimal(str(round(command_value, 2)))
                 }
-                # current_exec_dev_readings[f"greenhouse{greenhouse_id}_co2_command"] = sensor_data[sensor_type]["command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"] = sensor_data[sensor_type]["command"]
+
+                # Проверяем есть ли такой контроллер перед добавлением
+                if "co2_controller" in devices_in_greenhouse:
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"] += sensor_data[sensor_type][
+                        "command"]
 
             elif sensor_type == "temperature":
                 if ml_prediction_temperature != Decimal("-1.0"):
-                    # Преобразуем в float для вычислений
                     curr_val_float = float(curr_val_sensor)
                     pred_val_float = float(ml_prediction_temperature)
 
-                    # Абсолютное отклонение для температуры (°C)
                     deviation_absolute = pred_val_float - curr_val_float
                     command_value = max(-1.0, min(1.0, deviation_absolute / 5))
                 else:
@@ -716,8 +740,12 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     "pred": ml_prediction_temperature,
                     "command": Decimal(str(round(command_value, 2)))
                 }
-                # current_exec_dev_readings[f"greenhouse{greenhouse_id}_temperature_command"] = sensor_data[sensor_type]["command"]
-                current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"] = sensor_data[sensor_type]["command"]
+
+                # Проверяем есть ли такой контроллер перед добавлением
+                if "temperature_controller" in devices_in_greenhouse:
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"] += \
+                    sensor_data[sensor_type]["command"]
+
             else:
                 # Для других датчиков
                 sensor_data[sensor_type] = {

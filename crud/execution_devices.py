@@ -40,6 +40,13 @@ def delete_device(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Device doesn't exist")
     return {"message": "execution device deleted successfully"}
 
+@router.get("/read/by_greenhouse/{greenhouse_id}")
+def get_executive_devices_by_greenhouse(greenhouse_id: int, db: Session = Depends(get_db)):
+    devices_by_greenhouse = get_executive_devices_by_greenhouse_db(greenhouse_id, db)
+    if devices_by_greenhouse is None:
+        raise HTTPException(status_code=404, detail="There's no any devices in the greenhouse by this id")
+    return devices_by_greenhouse
+
 
 def create_device_db(content: schemas.ExecutionDeviceCreate, db: Session):
     db_execdev = models.ExecutionDevice(**content.model_dump())  # Исправлено: model_dump() и models.ExecutionDevice
@@ -71,3 +78,7 @@ def delete_device_db(id: int, db: Session):
         db.delete(db_deleted)
         db.commit()
     return db_deleted
+
+def get_executive_devices_by_greenhouse_db(greenhouse_id: int, db: Session):
+    db_green = db.scalars(select(models.ExecutionDevice).where(models.ExecutionDevice.greenhouse_id == greenhouse_id)).all()
+    return db_green

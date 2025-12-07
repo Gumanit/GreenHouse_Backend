@@ -850,8 +850,14 @@ def create_report_rows(db):
         reports_created = 0
         for greenhouse_id, sensors in greenhouses.items():
             try:
-                create_single_report_row(db, greenhouse_id, sensors)
-                reports_created += 1
+                # Создаем ОТДЕЛЬНУЮ сессию для каждой теплицы
+                db_per_greenhouse = SessionLocal()
+                try:
+                    create_single_report_row(db_per_greenhouse, greenhouse_id, sensors)
+                    reports_created += 1
+                finally:
+                    db_per_greenhouse.close()  # Закрываем сессию после каждой теплицы
+
             except Exception as e:
                 print(f"Ошибка при создании отчета для теплицы {greenhouse_id}: {e}")
 
@@ -893,78 +899,79 @@ def simulate_reading(
     return create_single_reading(db, vg, vs)
 
 
-# def start_periodic_reporting(db: Session, interval_minutes: int = 3):
-#     """
-#     Запуск периодического создания отчетов
-#
-#     Args:
-#         db: подключение к БД
-#         interval_minutes: интервал в минутах
-#     """
-#     global reporting_active
-#
-#     def reporting_loop():
-#         while reporting_active:
-#             try:
-#                 create_report_rows(db)
-#             except Exception as e:
-#                 print(f"Ошибка в периодическом создании отчетов: {e}")
-#
-#             # Ожидание указанного интервала
-#             time.sleep(interval_minutes * 60)
-#
-#     reporting_active = True
-#     global reporting_thread
-#     reporting_thread = threading.Thread(target=reporting_loop, daemon=True)
-#     reporting_thread.start()
-#
-#     return {"status": "started", "interval_minutes": interval_minutes}
+def start_periodic_reporting(interval_minutes: int = 3):
+    """
+    Запуск периодического создания отчетов
+    """
+    global reporting_active
 
-# def stop_periodic_reporting():
-#     """
-#     Остановка периодического создания отчетов
-#     """
-#     global reporting_active
-#     reporting_active = False
-#
-#     if reporting_thread and reporting_thread.is_alive():
-#         reporting_thread.join(timeout=5)
-#
-#     return {"status": "stopped", "message": "Периодическое создание отчетов остановлено"}
+    def reporting_loop():
+        while reporting_active:
+            try:
+                # Создаем новую сессию для каждой итерации
+                db = SessionLocal()
+                try:
+                    create_report_rows(db)
+                finally:
+                    db.close()  # Закрываем сессию после использования
 
-# # Эндпоинты для управления периодическими отчетами
-# @router.post("/start-periodic-reports/")
-# def start_periodic_reports_endpoint(
-#         background_tasks: BackgroundTasks,
-#         interval_minutes: int = Query(3, description="Интервал создания отчетов в минутах"),
-#         db: Session = Depends(get_db)
-# ):
-#     """Запуск автоматического создания отчетов"""
-#     global reporting_active
-#
-#     if reporting_active:
-#         raise HTTPException(status_code=400, detail="Периодическое создание отчетов уже запущено")
-#
-#     result = start_periodic_reporting(db, interval_minutes)
-#     return result
+            except Exception as e:
+                print(f"Ошибка в периодическом создании отчетов: {e}")
+
+            # Ожидание указанного интервала
+            time.sleep(interval_minutes * 60)
+
+    reporting_active = True
+    global reporting_thread
+    reporting_thread = threading.Thread(target=reporting_loop, daemon=True)
+    reporting_thread.start()
+
+    return {"status": "started", "interval_minutes": interval_minutes}
+
+def stop_periodic_reporting():
+    """
+    Остановка периодического создания отчетов
+    """
+    global reporting_active
+    reporting_active = False
+
+    if reporting_thread and reporting_thread.is_alive():
+        reporting_thread.join(timeout=5)
+
+    return {"status": "stopped", "message": "Периодическое создание отчетов остановлено"}
+
+@router.post("/start-periodic-reports/")
+def start_periodic_reports_endpoint(
+        interval_minutes: int = Query(3, description="Интервал создания отчетов в минутах")
+        # Убрали db: Session = Depends(get_db) - сессия создается внутри функции
+):
+    """Запуск автоматического создания отчетов"""
+    global reporting_active
+
+    if reporting_active:
+        raise HTTPException(status_code=400, detail="Периодическое создание отчетов уже запущено")
+
+    # Передаем только интервал, не сессию
+    result = start_periodic_reporting(interval_minutes)
+    return result
 
 
-# @router.post("/stop-periodic-reports/")
-# def stop_periodic_reports_endpoint():
-#     """Остановка автоматического создания отчетов"""
-#     global reporting_active
-#
-#     if not reporting_active:
-#         raise HTTPException(status_code=400, detail="Периодическое создание отчетов не запущено")
-#
-#     result = stop_periodic_reporting()
-#     return result
-#
+@router.post("/stop-periodic-reports/")
+def stop_periodic_reports_endpoint():
+    """Остановка автоматического создания отчетов"""
+    global reporting_active
 
-# @router.get("/reporting-status/")
-# # def get_reporting_status():
-# #     """Получение статуса периодического создания отчетов"""
-# #     return {
-# #         "reporting_active": reporting_active,
-# #         "interval_seconds": 40
-# #     }
+    if not reporting_active:
+        raise HTTPException(status_code=400, detail="Периодическое создание отчетов не запущено")
+
+    result = stop_periodic_reporting()
+    return result
+
+
+@router.get("/reporting-status/")
+def get_reporting_status():
+    """Получение статуса периодического создания отчетов"""
+    return {
+        "reporting_active": reporting_active,
+        "interval_seconds": 360
+    }

@@ -61,6 +61,33 @@ def get_current_season_and_time():
 
 season, time_of_day = get_current_season_and_time()
 
+# Глобальная переменная на уровне модуля
+current_exec_dev_readings = {}
+
+def init_exec_devices_power(db: Session):
+    """Инициализация мощностей исполнительных устройств при запуске"""
+    from crud.greenhouses import get_greenhouses_db
+    from crud.execution_devices import get_executive_devices_by_greenhouse
+
+    greenhouses = get_greenhouses_db(db)
+
+    for greenhouse in greenhouses:
+        devices = get_executive_devices_by_greenhouse(greenhouse.greenhouse_id, db)
+
+        # Создаем записи только для тех устройств, которые есть в теплице
+        greenhouse_devices = {}
+        for device in devices:
+            if device.type == "temperature_controller":
+                greenhouse_devices["temperature_power"] = Decimal(str(random.randint(20, 30)))
+            elif device.type == "humidity_controller":
+                greenhouse_devices["humidity_power"] = Decimal(str(random.randint(20, 30)))
+            elif device.type == "co2_controller":
+                greenhouse_devices["co2_power"] = Decimal(str(random.randint(20, 30)))
+
+        current_exec_dev_readings[f"greenhouse_{greenhouse.greenhouse_id}"] = greenhouse_devices
+
+    print(f"Инициализированы мощности для {len(greenhouses)} теплиц")
+
 
 def generate_sensor_data(season, time_of_day, sensor_type=None, base_value=None):
     """Генерация данных датчиков с уникальными вариациями для каждого датчика"""
@@ -288,9 +315,17 @@ async def continuous_sensor_updates():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan менеджер для управления событиями запуска и остановки"""
-    global background_task_running, background_task
+    global background_task_running, background_task, current_exec_dev_readings
 
-    # Startup
+    try:
+        # Создаем сессию БД для инициализации
+        db = SessionLocal()
+        init_exec_devices_power(db)
+        db.close()
+        print(f"Инициализированы мощности для {len(current_exec_dev_readings)} теплиц")
+    except Exception as e:
+        print(f"Ошибка при инициализации мощностей: {e}")
+
     print("Запуск фоновой задачи обновления показаний...")
     background_task_running = True
     background_task = asyncio.create_task(continuous_sensor_updates())
@@ -595,9 +630,6 @@ def predict_co2_nn(sensor_data: dict, report_time: datetime,
         return Decimal("-1.0")
 
 
-# Глобальная переменная на уровне модуля
-current_exec_dev_readings = {}
-
 def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
     """
     Создание одной строки отчета для теплицы с ML предсказаниями
@@ -662,23 +694,22 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
         else:
             ml_prediction_temperature = Decimal("-1.0")
 
-        # ИНИЦИАЛИЗАЦИЯ ТОЛЬКО ПРИ ПЕРВОМ ВЫЗОВЕ ДЛЯ ДАННОЙ ТЕПЛИЦЫ
-        # И ТОЛЬКО ДЛЯ ТЕХ КОНТРОЛЛЕРОВ, КОТОРЫЕ ЕСТЬ В ТЕПЛИЦЕ
-        if f"greenhouse_{greenhouse_id}" not in current_exec_dev_readings:
-            greenhouse_readings = {}
+        def calculate_command(deviation: float, sensor_type: str) -> Decimal:
+            """Расчет команды корректировки мощности на основе отклонения"""
 
-            if "temperature_controller" in devices_in_greenhouse:
-                greenhouse_readings["temperature_power"] = Decimal("0")
+            # Коэффициент усиления для каждого типа
+            # На сколько % мощности изменить на 1 единицу отклонения
+            gains = {
+                "temperature": 5.0,  # 1°C отклонения = ±5% мощности
+                "humidity": 2.0,  # 1% отклонения = ±2% мощности
+                "co2": 0.3,  # 1 ppm отклонения = ±0.3% мощности
+            }
 
-            if "humidity_controller" in devices_in_greenhouse:
-                greenhouse_readings["humidity_power"] = Decimal("0")
+            gain = gains.get(sensor_type, 1.0)
+            command = deviation * gain
 
-            if "co2_controller" in devices_in_greenhouse:
-                greenhouse_readings["co2_power"] = Decimal("0")
+            return Decimal(str(round(command, 2)))
 
-            current_exec_dev_readings[f"greenhouse_{greenhouse_id}"] = greenhouse_readings
-
-        # ТЕПЕРЬ ПРОВЕРЯЕМ ПЕРЕД ДОБАВЛЕНИЕМ МОЩНОСТИ
         for sensor in sensors:
             sensor_type = sensor["type"]
             curr_val_sensor = Decimal(str(raw_sensor_data[sensor_type]))
@@ -688,21 +719,23 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     curr_val_float = float(curr_val_sensor)
                     pred_val_float = float(ml_prediction_humidity)
 
-                    deviation_percent = ((pred_val_float - curr_val_float) / curr_val_float) * 100
-                    command_value = deviation_percent
+                    deviation_absolute = pred_val_float - curr_val_float
+                    command_value = calculate_command(deviation_absolute, "humidity")
                 else:
-                    command_value = Decimal("0.0")
+                    command_value = Decimal("50.0")
 
                 sensor_data[sensor_type] = {
                     "value": curr_val_sensor,
                     "pred": ml_prediction_humidity,
-                    "command": Decimal(str(round(command_value, 2)))
+                    "command": command_value
                 }
 
                 # Проверяем есть ли такой контроллер перед добавлением
                 if "humidity_controller" in devices_in_greenhouse:
-                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"] += \
-                    sensor_data[sensor_type]["command"]
+                    current_power = current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"]
+                    new_power = current_power + command_value
+                    new_power = max(Decimal("-100.0"), min(Decimal("100.0"), new_power))
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["humidity_power"] = new_power
 
             elif sensor_type == "co2":
                 if ml_prediction_co2 != Decimal("-1.0"):
@@ -710,20 +743,22 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     pred_val_float = float(ml_prediction_co2)
 
                     deviation_absolute = pred_val_float - curr_val_float
-                    command_value = max(-1.0, min(1.0, deviation_absolute / 200))
+                    command_value = calculate_command(deviation_absolute, "co2")
                 else:
-                    command_value = Decimal("0.0")
+                    command_value = Decimal("50.0")
 
                 sensor_data[sensor_type] = {
                     "value": curr_val_sensor,
                     "pred": ml_prediction_co2,
-                    "command": Decimal(str(round(command_value, 2)))
+                    "command": command_value
                 }
 
                 # Проверяем есть ли такой контроллер перед добавлением
                 if "co2_controller" in devices_in_greenhouse:
-                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"] += sensor_data[sensor_type][
-                        "command"]
+                    current_power = current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"]
+                    new_power = current_power + command_value
+                    new_power = max(Decimal("-100.0"), min(Decimal("100.0"), new_power))
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["co2_power"] = new_power
 
             elif sensor_type == "temperature":
                 if ml_prediction_temperature != Decimal("-1.0"):
@@ -731,21 +766,22 @@ def create_single_report_row(db: Session, greenhouse_id: int, sensors: list):
                     pred_val_float = float(ml_prediction_temperature)
 
                     deviation_absolute = pred_val_float - curr_val_float
-                    command_value = max(-1.0, min(1.0, deviation_absolute / 5))
+                    command_value = calculate_command(deviation_absolute, "temperature")
                 else:
-                    command_value = Decimal("0.0")
+                    command_value = Decimal("50.0")
 
                 sensor_data[sensor_type] = {
                     "value": curr_val_sensor,
                     "pred": ml_prediction_temperature,
-                    "command": Decimal(str(round(command_value, 2)))
+                    "command": command_value
                 }
 
                 # Проверяем есть ли такой контроллер перед добавлением
                 if "temperature_controller" in devices_in_greenhouse:
-                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"] += \
-                    sensor_data[sensor_type]["command"]
-
+                    current_power = current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"]
+                    new_power = current_power + command_value
+                    new_power = max(Decimal("-100.0"), min(Decimal("100.0"), new_power))
+                    current_exec_dev_readings[f"greenhouse_{greenhouse_id}"]["temperature_power"] = new_power
             else:
                 # Для других датчиков
                 sensor_data[sensor_type] = {
@@ -834,91 +870,12 @@ def create_report_rows(db):
         print(error_msg)
         return {"status": "error", "message": error_msg}
 
-
-def start_periodic_reporting(db: Session, interval_minutes: int = 3):
-    """
-    Запуск периодического создания отчетов
-
-    Args:
-        db: подключение к БД
-        interval_minutes: интервал в минутах
-    """
-    global reporting_active
-
-    def reporting_loop():
-        while reporting_active:
-            try:
-                create_report_rows(db)
-            except Exception as e:
-                print(f"Ошибка в периодическом создании отчетов: {e}")
-
-            # Ожидание указанного интервала
-            time.sleep(interval_minutes * 60)
-
-    reporting_active = True
-    global reporting_thread
-    reporting_thread = threading.Thread(target=reporting_loop, daemon=True)
-    reporting_thread.start()
-
-    return {"status": "started", "interval_minutes": interval_minutes}
-
-
-def stop_periodic_reporting():
-    """
-    Остановка периодического создания отчетов
-    """
-    global reporting_active
-    reporting_active = False
-
-    if reporting_thread and reporting_thread.is_alive():
-        reporting_thread.join(timeout=5)
-
-    return {"status": "stopped", "message": "Периодическое создание отчетов остановлено"}
-
-
-# Эндпоинты для управления периодическими отчетами
-@router.post("/start-periodic-reports/")
-def start_periodic_reports_endpoint(
-        background_tasks: BackgroundTasks,
-        interval_minutes: int = Query(3, description="Интервал создания отчетов в минутах"),
-        db: Session = Depends(get_db)
-):
-    """Запуск автоматического создания отчетов"""
-    global reporting_active
-
-    if reporting_active:
-        raise HTTPException(status_code=400, detail="Периодическое создание отчетов уже запущено")
-
-    result = start_periodic_reporting(db, interval_minutes)
-    return result
-
-
-@router.post("/stop-periodic-reports/")
-def stop_periodic_reports_endpoint():
-    """Остановка автоматического создания отчетов"""
-    global reporting_active
-
-    if not reporting_active:
-        raise HTTPException(status_code=400, detail="Периодическое создание отчетов не запущено")
-
-    result = stop_periodic_reporting()
-    return result
-
-
 @router.post("/create-reports-now/")
 def create_reports_now_endpoint(db: Session = Depends(get_db)):
     """Немедленное создание отчетов"""
     result = create_report_rows(db)
     return result
 
-
-@router.get("/reporting-status/")
-def get_reporting_status():
-    """Получение статуса периодического создания отчетов"""
-    return {
-        "reporting_active": reporting_active,
-        "interval_seconds": 40
-    }
 
 @router.get("/power_execution_devices")
 def get_execution_devices_status():
@@ -934,3 +891,80 @@ def simulate_reading(
 ):
     """Симуляция одного измерения"""
     return create_single_reading(db, vg, vs)
+
+
+# def start_periodic_reporting(db: Session, interval_minutes: int = 3):
+#     """
+#     Запуск периодического создания отчетов
+#
+#     Args:
+#         db: подключение к БД
+#         interval_minutes: интервал в минутах
+#     """
+#     global reporting_active
+#
+#     def reporting_loop():
+#         while reporting_active:
+#             try:
+#                 create_report_rows(db)
+#             except Exception as e:
+#                 print(f"Ошибка в периодическом создании отчетов: {e}")
+#
+#             # Ожидание указанного интервала
+#             time.sleep(interval_minutes * 60)
+#
+#     reporting_active = True
+#     global reporting_thread
+#     reporting_thread = threading.Thread(target=reporting_loop, daemon=True)
+#     reporting_thread.start()
+#
+#     return {"status": "started", "interval_minutes": interval_minutes}
+
+# def stop_periodic_reporting():
+#     """
+#     Остановка периодического создания отчетов
+#     """
+#     global reporting_active
+#     reporting_active = False
+#
+#     if reporting_thread and reporting_thread.is_alive():
+#         reporting_thread.join(timeout=5)
+#
+#     return {"status": "stopped", "message": "Периодическое создание отчетов остановлено"}
+
+# # Эндпоинты для управления периодическими отчетами
+# @router.post("/start-periodic-reports/")
+# def start_periodic_reports_endpoint(
+#         background_tasks: BackgroundTasks,
+#         interval_minutes: int = Query(3, description="Интервал создания отчетов в минутах"),
+#         db: Session = Depends(get_db)
+# ):
+#     """Запуск автоматического создания отчетов"""
+#     global reporting_active
+#
+#     if reporting_active:
+#         raise HTTPException(status_code=400, detail="Периодическое создание отчетов уже запущено")
+#
+#     result = start_periodic_reporting(db, interval_minutes)
+#     return result
+
+
+# @router.post("/stop-periodic-reports/")
+# def stop_periodic_reports_endpoint():
+#     """Остановка автоматического создания отчетов"""
+#     global reporting_active
+#
+#     if not reporting_active:
+#         raise HTTPException(status_code=400, detail="Периодическое создание отчетов не запущено")
+#
+#     result = stop_periodic_reporting()
+#     return result
+#
+
+# @router.get("/reporting-status/")
+# # def get_reporting_status():
+# #     """Получение статуса периодического создания отчетов"""
+# #     return {
+# #         "reporting_active": reporting_active,
+# #         "interval_seconds": 40
+# #     }

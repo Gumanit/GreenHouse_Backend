@@ -52,6 +52,25 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
     return create_user_db(db, user_data)
 
+@router.post("/auth", response_model=schemas.User, operation_id="verify_user")
+def verify_user(user: schemas.UserAuth, db: Session = Depends(get_db)):
+    # Ищем пользователя по логину
+    db_user = db.scalars(
+        select(models.User)
+        .where(models.User.login == user.login)
+        .order_by(models.User.id)
+    ).first()
+
+    # Если пользователь не найден
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Проверяем пароль
+    if not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    # Возвращаем данные пользователя (без пароля)
+    return db_user
 
 @router.get("/{user_id}", response_model=schemas.User, operation_id="get_user")
 def read_user(user_id: int, db: Session = Depends(get_db)):

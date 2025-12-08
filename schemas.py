@@ -176,6 +176,16 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     pass
 
+class UserAuth(BaseModel):
+    login: str | None = Field(
+        None,
+        description="Телефон или почта"
+    )
+    password: str | None = Field(
+        None,
+        description="Пароль"
+    )
+
 
 class UserUpdate(BaseModel):
     """Схема для обновления пользователя"""

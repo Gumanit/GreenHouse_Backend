@@ -63,11 +63,11 @@ def verify_user(user: schemas.UserAuth, db: Session = Depends(get_db)):
 
     # Если пользователь не найден
     if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     # Проверяем пароль
     if not verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=401, detail="Incorrect password")
+        raise HTTPException(status_code=401, detail="Неверный пароль")
 
     # Возвращаем данные пользователя (без пароля)
     return db_user

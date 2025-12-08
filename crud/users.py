@@ -43,7 +43,7 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this login already exists"
+            detail="Пользователь с таким логином уже существует"
         )
 
     # Хешируем пароль
@@ -79,7 +79,7 @@ def read_user(user_id: int, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="Пользователь не найден"
         )
     return user
 
@@ -105,7 +105,7 @@ def update_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="Пользователь не найден"
         )
     return user
 
@@ -117,7 +117,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="Пользователь не найден"
         )
     return {"message": "User deleted successfully"}
 

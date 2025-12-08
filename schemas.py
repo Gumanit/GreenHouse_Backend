@@ -1,3 +1,5 @@
+import base64
+
 from pydantic import BaseModel, ConfigDict, condecimal, Field, EmailStr, constr, StringConstraints
 from datetime import datetime
 from decimal import Decimal
@@ -196,4 +198,23 @@ class User(BaseModel):
     login: LoginType
     is_sudo: bool
     description: str | None = Field(None, max_length=100)
+    model_config = ConfigDict(from_attributes=True)
+
+'''
+Схемы для Detection
+'''
+
+class DetectionBase(BaseModel):
+    greenhouse_id: int = Field(..., gt=0, description="ID теплицы")
+
+class DetectionCreate(DetectionBase):
+    pass
+
+class DetectionUpdate(BaseModel):
+    greenhouse_id: Optional[int] = Field(None, gt=0)
+
+class Detection(DetectionBase):
+    id: int
+    confidence_level: float = Field(..., ge=0.0, le=1.0, description="Уровень уверенности модели")
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)

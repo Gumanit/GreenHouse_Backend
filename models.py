@@ -1,8 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DECIMAL, DateTime, ForeignKey, func, Boolean
+from sqlalchemy import String, Text, DECIMAL, func, Boolean, Column, Integer, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
-
 from database import Base
-
+from sqlalchemy.dialects.mysql import LONGBLOB
 
 class AgronomicRule(Base):
     __tablename__ = 'agronomic_rules'
@@ -90,3 +89,14 @@ class User(Base):
     password = Column(String(255), nullable=False)
     is_sudo = Column(Boolean, nullable=False)
     description = Column(String(100))
+
+
+class Detection(Base):
+    __tablename__ = 'detections'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    photo = Column(LONGBLOB, nullable=False)
+    detection_photo = Column(LONGBLOB, nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
+    confidence_level = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

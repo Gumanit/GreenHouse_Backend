@@ -22,6 +22,7 @@ from crud.execution_devices import router as execution_devices_router
 from crud.cameras import router as cameras_router
 from init_db import router as admin_router
 from crud.users import router as user_router
+from crud.detections import router as detection_router
 
 
 @asynccontextmanager
@@ -62,6 +63,7 @@ app = FastAPI(
 # Подключаем роутеры
 app.include_router(simulations_router)
 app.include_router(admin_router)
+app.include_router(detection_router)
 app.include_router(greenhouses_router)
 app.include_router(sensors_router)
 app.include_router(report_router)

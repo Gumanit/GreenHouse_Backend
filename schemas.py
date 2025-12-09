@@ -96,7 +96,7 @@ class ReportRead(ReportBase):
 Схемы для ExecutionDevice
 '''
 
-DeviceType = Literal["ventilation", "humidifier", "co2_injector", "heater", "lighting"]
+DeviceType = Literal["humidity_controller", "co2_controller", "temperature_controller"]
 
 class ExecutionDeviceBase(BaseModel):
     greenhouse_id: int = Field(gt=0)

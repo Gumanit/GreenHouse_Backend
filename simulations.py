@@ -2,7 +2,7 @@ import pickle
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, APIRouter, Body
 from sqlalchemy.orm import Session
 import models, schemas
 from crud.sensors import get_sensor_info, get_greenhouse_info
@@ -65,28 +65,63 @@ season, time_of_day = get_current_season_and_time()
 current_exec_dev_readings = {}
 
 def init_exec_devices_power(db: Session):
-    """Инициализация мощностей исполнительных устройств при запуске"""
+    """Инициализация мощностей исполнительных устройств на основе текущего состояния БД"""
     from crud.greenhouses import get_greenhouses_db
     from crud.execution_devices import get_executive_devices_by_greenhouse
 
+    # Объявляем глобальную переменную в начале функции
+    global current_exec_dev_readings
+
     greenhouses = get_greenhouses_db(db)
 
+    # Создаем временный словарь для новых данных
+    new_exec_dev_readings = {}
+
     for greenhouse in greenhouses:
+        greenhouse_key = f"greenhouse_{greenhouse.greenhouse_id}"
         devices = get_executive_devices_by_greenhouse(greenhouse.greenhouse_id, db)
 
-        # Создаем записи только для тех устройств, которые есть в теплице
+        # Получаем текущие данные для этой теплицы (если есть)
+        current_devices = current_exec_dev_readings.get(greenhouse_key, {})
+
+        # Создаем новый словарь для устройств этой теплицы
         greenhouse_devices = {}
+
+        # Обрабатываем каждое устройство из БД
         for device in devices:
-            if device.type == "temperature_controller":
-                greenhouse_devices["temperature_power"] = Decimal(str(random.randint(20, 30)))
-            elif device.type == "humidity_controller":
-                greenhouse_devices["humidity_power"] = Decimal(str(random.randint(20, 30)))
-            elif device.type == "co2_controller":
-                greenhouse_devices["co2_power"] = Decimal(str(random.randint(20, 30)))
+            device_type = device.type
+            if device_type == "temperature_controller":
+                device_key = "temperature_power"
+            elif device_type == "humidity_controller":
+                device_key = "humidity_power"
+            elif device_type == "co2_controller":
+                device_key = "co2_power"
+            else:
+                # Для других типов устройств создаем общую запись
+                device_key = f"{device_type.split('_')[0]}_power" if '_' in device_type else f"{device_type}_power"
 
-        current_exec_dev_readings[f"greenhouse_{greenhouse.greenhouse_id}"] = greenhouse_devices
+            # Сохраняем текущее значение, если устройство уже было
+            if device_key in current_devices:
+                greenhouse_devices[device_key] = current_devices[device_key]
+            else:
+                # Создаем новое значение по умолчанию
+                if device_type == "temperature_controller":
+                    greenhouse_devices["temperature_power"] = Decimal(str(random.randint(20, 30)))
+                elif device_type == "humidity_controller":
+                    greenhouse_devices["humidity_power"] = Decimal(str(random.randint(20, 30)))
+                elif device_type == "co2_controller":
+                    greenhouse_devices["co2_power"] = Decimal(str(random.randint(20, 30)))
+                else:
+                    greenhouse_devices[device_key] = Decimal(str(random.randint(20, 30)))
 
-    print(f"Инициализированы мощности для {len(greenhouses)} теплиц")
+
+        # Сохраняем только если есть устройства
+        if greenhouse_devices:
+            new_exec_dev_readings[greenhouse_key] = greenhouse_devices
+
+
+    # Обновляем глобальную переменную
+    current_exec_dev_readings = new_exec_dev_readings
 
 
 def generate_sensor_data(season, time_of_day, sensor_type=None, base_value=None):
@@ -884,9 +919,84 @@ def create_reports_now_endpoint(db: Session = Depends(get_db)):
 
 
 @router.get("/power_execution_devices")
-def get_execution_devices_status():
-    """Получение мощности исполнительных устройств"""
-    return current_exec_dev_readings
+def get_execution_devices_status(db: Session = Depends(get_db)):
+    """Получение актуальных мощностей исполнительных устройств всех теплиц"""
+    # Обновляем данные на основе текущего состояния БД
+    init_exec_devices_power(db)
+
+    # Форматируем вывод для удобства чтения
+    formatted_output = {}
+    for greenhouse_key, devices in current_exec_dev_readings.items():
+        formatted_output[greenhouse_key] = {
+            device: float(value) if isinstance(value, Decimal) else value
+            for device, value in devices.items()
+        }
+
+    return formatted_output
+
+
+def get_current_power_example():
+    """Генерирует пример на основе текущих данных"""
+    # Создаем сессию вручную для генерации примера
+    db = SessionLocal()
+    try:
+        # Инициализируем данные
+        init_exec_devices_power(db)
+
+        # Проверяем, есть ли данные
+        if not current_exec_dev_readings:
+            return {
+                "greenhouse_1": {
+                    "temperature_power": 30.0,
+                    "humidity_power": 25.0,
+                    "co2_power": 20.0
+                }
+            }
+
+        # Преобразуем текущие данные
+        example = {}
+        for greenhouse_key, devices in list(current_exec_dev_readings.items()):
+            example[greenhouse_key] = {}
+            for device_key, value in list(devices.items()):
+                if isinstance(value, Decimal):
+                    example[greenhouse_key][device_key] = float(value)
+                else:
+                    example[greenhouse_key][device_key] = value
+
+        return example
+    finally:
+        db.close()
+
+
+@router.put("/update_all_power_execution_devices")
+def update_all_power_execution_devices(
+        updates: Dict[str, Dict[str, float]] = Body(
+            ...,
+            description="Обновление мощностей исполнительных устройств",
+            example=get_current_power_example()  # Используем функцию
+        ),
+        db: Session = Depends(get_db)
+):
+    """Обновление мощностей исполнительных устройств"""
+
+    # Синхронизируем с БД
+    init_exec_devices_power(db)
+
+    # Применяем обновления
+    for greenhouse_key, devices in updates.items():
+        if greenhouse_key in current_exec_dev_readings:
+            for device_key, power in devices.items():
+                if device_key in current_exec_dev_readings[greenhouse_key] and -100 <= power <= 100:
+                    current_exec_dev_readings[greenhouse_key][device_key] = Decimal(str(power))
+
+    # Форматируем ответ
+    return {
+        greenhouse_key: {
+            device_key: float(value) for device_key, value in devices.items()
+        }
+        for greenhouse_key, devices in current_exec_dev_readings.items()
+    }
+
 
 # Endpoint симуляции
 @router.get("/simulate-reading/")

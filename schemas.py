@@ -186,6 +186,7 @@ class UserAuth(BaseModel):
 
 class UserUpdate(BaseModel):
     """Схема для обновления пользователя"""
+    login: LoginType | None
     password: str | None = Field(
         None,
         min_length=8,

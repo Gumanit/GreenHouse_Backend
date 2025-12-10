@@ -430,9 +430,11 @@ async def simulate_reading(
 
 
 @router.get("/simulate-reading/current")
-async def get_current_readings():
+async def get_current_readings(db: Session = Depends(get_db)):
     """Получение текущих показаний (только из кэша)"""
     global current_sensor_readings
+
+    await update_sensor_readings(db)
 
     async with readings_lock:
         if not current_sensor_readings:

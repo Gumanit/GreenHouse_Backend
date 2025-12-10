@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from database import Base
 from sqlalchemy.dialects.mysql import LONGBLOB
 
+
 class AgronomicRule(Base):
     __tablename__ = 'agronomic_rules'
 
@@ -10,14 +11,15 @@ class AgronomicRule(Base):
     type_crop = Column(String(255), nullable=False)
     rule_params = Column(Text, nullable=False)
 
-    greenhouses = relationship("Greenhouse", back_populates="agronomic_rule")
+    # Добавляем каскадное удаление для greenhouses
+    greenhouses = relationship("Greenhouse", back_populates="agronomic_rule", cascade="all, delete-orphan")
 
 
 class Greenhouse(Base):
     __tablename__ = 'greenhouses'
 
     greenhouse_id = Column(Integer, primary_key=True, autoincrement=True)
-    agrorule_id = Column(Integer, ForeignKey('agronomic_rules.id'), nullable=False)
+    agrorule_id = Column(Integer, ForeignKey('agronomic_rules.id', ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False)
     location = Column(String(255))
     description = Column(Text)
@@ -27,25 +29,28 @@ class Greenhouse(Base):
     cameras = relationship("Camera", back_populates="greenhouse", cascade="all, delete-orphan")
     execution_devices = relationship("ExecutionDevice", back_populates="greenhouse", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="greenhouse", cascade="all, delete-orphan")
+    # Добавляем связь с Detection для каскадного удаления
+    detections = relationship("Detection", back_populates="greenhouse", cascade="all, delete-orphan")
 
 
 class Sensor(Base):
     __tablename__ = 'sensors'
 
     sensor_id = Column(Integer, primary_key=True, autoincrement=True)
-    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id', ondelete="CASCADE"), nullable=False)
     type = Column(String(50), nullable=False)
 
     greenhouse = relationship("Greenhouse", back_populates="sensors")
-    execution_devices = relationship("ExecutionDevice", back_populates="sensor")
+    # Добавляем каскадное удаление для execution_devices
+    execution_devices = relationship("ExecutionDevice", back_populates="sensor", cascade="all, delete-orphan")
 
 
 class ExecutionDevice(Base):
     __tablename__ = 'execution_devices'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
-    sensor_id = Column(Integer, ForeignKey('sensors.sensor_id'), nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id', ondelete="CASCADE"), nullable=False)
+    sensor_id = Column(Integer, ForeignKey('sensors.sensor_id', ondelete="CASCADE"), nullable=False)
     type = Column(String(255), nullable=False)
 
     greenhouse = relationship("Greenhouse", back_populates="execution_devices")
@@ -56,7 +61,7 @@ class Report(Base):
     __tablename__ = 'reports'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id', ondelete="CASCADE"), nullable=False)
     co2_value = Column(DECIMAL(10, 2))
     humidity_value = Column(DECIMAL(10, 2))
     temperature_value = Column(DECIMAL(10, 2))
@@ -75,7 +80,7 @@ class Camera(Base):
     __tablename__ = 'cameras'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id', ondelete="CASCADE"), nullable=False)
     status = Column(String(50), default="active")
 
     greenhouse = relationship("Greenhouse", back_populates="cameras")
@@ -97,6 +102,9 @@ class Detection(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     photo = Column(LONGBLOB, nullable=False)
     detection_photo = Column(LONGBLOB, nullable=False)
-    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id'), nullable=False)
+    greenhouse_id = Column(Integer, ForeignKey('greenhouses.greenhouse_id', ondelete="CASCADE"), nullable=False)
     confidence_level = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Добавляем обратную связь с Greenhouse
+    greenhouse = relationship("Greenhouse", back_populates="detections")

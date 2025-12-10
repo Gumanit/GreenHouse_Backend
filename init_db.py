@@ -36,7 +36,7 @@ def clear_and_seed_db(db: Session):
         # Очищаем таблицы в правильном порядке (от дочерних к родительским)
         tables_to_clear = [
             "reports", "sensors", "cameras", "execution_devices",
-            "greenhouses", "agronomic_rules"
+            "greenhouses", "agronomic_rules", "users", "detections"
         ]
 
         for table in tables_to_clear:
